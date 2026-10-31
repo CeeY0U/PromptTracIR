@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PromptTracIR</title>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3/dist/cytoscape.min.js"></script>
+<style>
+  :root { --bg:#0f1216; --panel:#171b21; --line:#2a313b; --text:#d9dee5; --muted:#8a94a3;
+          --agent:#e5534b; --human:#539bf5; --obs:#9aa4b2; --corr:#57ab5a; --inf:#e0823d; --contra:#f47067; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:13px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text);
+         display:grid; grid-template-columns:320px 1fr 360px; grid-template-rows:44px 1fr; height:100vh; }
+  header { grid-column:1/4; display:flex; align-items:center; gap:16px; padding:0 14px;
+           border-bottom:1px solid var(--line); background:var(--panel); }
+  header b { font-size:14px; letter-spacing:.3px; }
+  header .muted { color:var(--muted); }
+  header button { background:transparent; color:var(--text); border:1px solid var(--line); border-radius:6px;
+                  padding:4px 10px; cursor:pointer; }
+  header button.on { background:#2d333b; }
+  aside, #detail { overflow:auto; padding:12px; background:var(--panel); }
+  aside { border-right:1px solid var(--line); }
+  #detail { border-left:1px solid var(--line); }
+  h3 { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin:16px 0 6px; }
+  h3:first-child { margin-top:0; }
+  .card { border:1px solid var(--line); border-radius:6px; padding:8px; margin-bottom:6px; cursor:pointer; }
+  .card:hover { border-color:#444c56; }
+  .sev-high { border-left:3px solid var(--agent); } .sev-medium { border-left:3px solid var(--inf); }
+  .pill { display:inline-block; padding:0 6px; border-radius:9px; font-size:11px; background:#2d333b; margin-right:4px; }
+  .confirmed { background:#5c1f1c; } .probable { background:#5a3a14; } .possible { background:#4a4314; }
+  #main { position:relative; }
+  #cy, #timeline { position:absolute; inset:0; }
+  #timeline { overflow:auto; display:none; padding:10px; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  td, th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+  tr:hover td { background:#1c2128; cursor:pointer; }
+  pre { white-space:pre-wrap; word-break:break-all; background:#0f1216; border:1px solid var(--line);
+        padding:8px; border-radius:6px; font-size:11.5px; }
+  .legend { position:absolute; left:10px; bottom:10px; background:rgba(23,27,33,.9); border:1px solid var(--line);
+            border-radius:6px; padding:6px 10px; font-size:11px; color:var(--muted); }
+  .legend span { margin-right:10px; }
+  .k { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <b>PromptTracIR</b><span class="muted" id="casename"></span>
+  <span style="flex:1"></span>
+  <button id="bChain" class="on">Attack chain</button><button id="bFull">Full graph</button>
+  <button id="bTime">Timeline</button>
+</header>
+<aside>
+  <h3>Entry point</h3><div id="entry"></div>
+  <h3>Impact</h3><div id="impact"></div>
+  <h3>Findings</h3><div id="findings"></div>
+</aside>
+<div id="main">
+  <div id="cy"></div>
+  <div id="timeline"></div>
+  <div class="legend">
+    <span style="color:var(--corr)">━ corroborated</span><span style="color:var(--obs)">━ observed</span>
+    <span style="color:var(--inf)">┅ inferred</span><span style="color:var(--contra)">━ contradicted</span>
+    <span style="color:var(--agent)">■ agent</span><span style="color:var(--human)">■ human</span>
+  </div>
+</div>
+<div id="detail"><span class="muted">Click a node, edge, finding or timeline row.</span></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const j = u => fetch(u).then(r => r.ok ? r.json() : null);
+const KIND = { session:"#768390", prompt:"#c69026", source:"#986ee2", fragment:"#b083f0", model_call:"#6cb6ff",
+  tool_call:"#f69d50", process:"#adbac7", file:"#8ddb8c", registry:"#e275ad", network:"#96d0ff", domain:"#96d0ff" };
+let cy;
+
+async function evidence(ids) {
+  const out = [];
+  for (const id of (ids || []).slice(0, 8)) {
+    const e = await j("/api/events/" + encodeURIComponent(id));
+    if (e) out.push(`<pre><span class="k">${esc(e.event_id)}</span>\n${esc(e.source)} · ${esc(e.action)} · ${esc(e.timestamp)}\n` +
+      `${esc(e.command_line || e.object || e.attrs?.text || "")}\n<span class="k">raw: ${esc(e.raw.file)} @ ${esc(e.raw.locator)} (${esc(e.raw.parser)})</span></pre>`);
+  }
+  return out.join("");
+}
+
+async function showNode(d) {
+  const a = d.attrs || {};
+  let h = `<h3>${esc(d.kind)}</h3><b>${esc(d.label)}</b><pre>${esc(JSON.stringify(a, null, 2))}</pre>`;
+  h += `<h3>Supporting records</h3>` + await evidence(d.evidence);
+  $("#detail").innerHTML = h;
+}
+async function showEdge(d) {
+  let h = `<h3>edge</h3><b>${esc(d.relation)}</b> <span class="pill">${esc(d.status)}</span>` +
+    `<span class="pill">conf ${(+d.confidence).toFixed(2)}</span><pre>${esc(d.src)}\n→ ${esc(d.dst)}</pre>`;
+  if (Object.keys(d.signals || {}).length) h += `<h3>Signals</h3><pre>${esc(JSON.stringify(d.signals, null, 2))}</pre>`;
+  h += `<h3>Supporting records</h3>` + await evidence(d.evidence);
+  $("#detail").innerHTML = h;
+}
+
+async function loadGraph(view) {
+  const g = await j("/api/graph?view=" + view);
+  if (!g) { $("#cy").innerHTML = '<p style="padding:20px">Run <code>ptir analyze</code> first.</p>'; return; }
+  const els = [
+    ...g.nodes.map(n => ({ data: { id: n.id, label: n.label, kind: n.kind, attribution: n.attrs?.attribution || "", raw: n } })),
+    ...g.edges.map((e, i) => ({ data: { id: "e" + i, source: e.src, target: e.dst, label: e.relation, status: e.status, raw: e } })),
+  ];
+  cy = cytoscape({
+    container: $("#cy"), elements: els, wheelSensitivity: 0.2,
+    layout: { name: "breadthfirst", directed: true, spacingFactor: 1.15, padding: 30 },
+    style: [
+      { selector: "node", style: { "background-color": n => KIND[n.data("kind")] || "#888", label: "data(label)",
+        color: "#d9dee5", "font-size": 9, "text-wrap": "wrap", "text-max-width": 130, "text-valign": "bottom",
+        "text-margin-y": 4, width: 18, height: 18 } },
+      { selector: 'node[attribution = "agent"]', style: { "border-width": 3, "border-color": "#e5534b" } },
+      { selector: 'node[attribution = "human"]', style: { "border-width": 3, "border-color": "#539bf5" } },
+      { selector: 'node[kind = "tool_call"]', style: { shape: "round-rectangle", width: 26 } },
+      { selector: 'node[kind = "fragment"]', style: { shape: "tag" } },
+      { selector: "edge", style: { width: 1.4, "curve-style": "bezier", "target-arrow-shape": "triangle",
+        "arrow-scale": .7, label: "data(label)", "font-size": 8, color: "#8a94a3", "text-rotation": "autorotate",
+        "line-color": "#9aa4b2", "target-arrow-color": "#9aa4b2" } },
+      { selector: 'edge[status = "corroborated"]', style: { "line-color": "#57ab5a", "target-arrow-color": "#57ab5a", width: 2.2 } },
+      { selector: 'edge[status = "inferred"]', style: { "line-color": "#e0823d", "target-arrow-color": "#e0823d", "line-style": "dashed" } },
+      { selector: 'edge[status = "contradicted"]', style: { "line-color": "#f47067", "target-arrow-color": "#f47067" } },
+      { selector: ":selected", style: { "overlay-opacity": .15, "overlay-color": "#fff" } },
+    ],
+  });
+  cy.on("tap", "node", ev => showNode(ev.target.data("raw")));
+  cy.on("tap", "edge", ev => showEdge(ev.target.data("raw")));
+}
+
+function setView(v) {
+  for (const [b, n] of [["#bChain", "chain"], ["#bFull", "full"], ["#bTime", "time"]]) $(b).classList.toggle("on", n === v);
+  $("#cy").style.display = v === "time" ? "none" : "block";
+  $("#timeline").style.display = v === "time" ? "block" : "none";
+  if (v === "time") loadTimeline(); else loadGraph(v);
+}
+
+async function loadTimeline() {
+  const rows = await j("/api/timeline") || [];
+  $("#timeline").innerHTML = `<table><tr><th>time (UTC)</th><th>source</th><th>action</th><th>pid</th><th>detail</th></tr>` +
+    rows.map(r => `<tr data-id="${esc(r.event_id)}"><td>${esc(r.ts.slice(11, 23))}</td><td>${esc(r.source)}</td>` +
+      `<td>${esc(r.action)}</td><td>${esc(r.pid)}</td><td>${esc(r.detail)}</td></tr>`).join("") + "</table>";
+  $("#timeline").querySelectorAll("tr[data-id]").forEach(tr => tr.onclick = async () =>
+    $("#detail").innerHTML = "<h3>event</h3>" + await evidence([tr.dataset.id]));
+}
+
+function focus(ids) {
+  if (!cy) return;
+  cy.elements().unselect();
+  const sel = cy.nodes().filter(n => ids.includes(n.id()));
+  sel.select(); if (sel.length) cy.animate({ fit: { eles: sel, padding: 120 } }, { duration: 300 });
+}
+
+async function sidebar() {
+  const c = await j("/api/case"); $("#casename").textContent = c ? `· ${c.name}` : "";
+  const chain = await j("/api/chain") || {};
+  $("#entry").innerHTML = (chain.entry_points || []).map(e => `<div class="card" data-ids='${esc(JSON.stringify([e.fragment]))}'>` +
+    `<b>${esc(e.fragment)}</b><br><span class="k">${esc(e.source)}</span><br>` +
+    `<span class="pill">${esc(e.method)}</span><span class="pill">conf ${(+e.confidence).toFixed(2)}</span></div>`).join("")
+    || '<span class="k">none identified</span>';
+  if (chain.first_deviation) $("#entry").innerHTML += `<div class="k" style="margin-top:6px">first deviation: <b>${esc(chain.first_deviation)}</b></div>`;
+  const imp = await j("/api/impact") || [];
+  $("#impact").innerHTML = imp.map(i => `<div class="card" data-ids='${esc(JSON.stringify([i.tool_call]))}'>` +
+    `<span class="pill ${esc(i.level)}">${esc(i.level)}</span><b>${esc(i.destination)}</b><br>` +
+    `<span class="k">${esc(i.object || "")}${i.bytes_sent != null ? " · " + i.bytes_sent + " B sent" : ""}</span>` +
+    `<ul style="margin:4px 0 0 16px;padding:0">${i.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>`).join("")
+    || '<span class="k">no external egress</span>';
+  const f = await j("/api/findings") || [];
+  $("#findings").innerHTML = f.map(x => `<div class="card sev-${esc(x.severity)}" data-ids='${esc(JSON.stringify(x.nodes))}'>` +
+    `<span class="pill">${esc(x.finding_id)}</span><span class="pill">${esc(x.kind)}</span><br>${esc(x.summary)}</div>`).join("")
+    || '<span class="k">no findings</span>';
+  document.querySelectorAll(".card[data-ids]").forEach(el => el.onclick = () => focus(JSON.parse(el.dataset.ids)));
+}
+
+$("#bChain").onclick = () => setView("chain");
+$("#bFull").onclick = () => setView("full");
+$("#bTime").onclick = () => setView("time");
+sidebar(); setView("chain");
+</script>
+</body>
+</html>

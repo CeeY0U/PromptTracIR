@@ -1,0 +1,26 @@
+<!--
+  Lab-only Sysmon config: logs everything PromptTracIR uses, with no filtering.
+  Too noisy for production; fine for short, isolated lab runs.
+  Install:  Sysmon64.exe -accepteula -i sysmon-lab.xml
+  Update:   Sysmon64.exe -c sysmon-lab.xml
+  Check the schemaversion matches your Sysmon build (Sysmon64.exe -s).
+-->
+<Sysmon schemaversion="4.90">
+  <HashAlgorithms>sha256</HashAlgorithms>
+  <CheckRevocation>false</CheckRevocation>
+  <EventFiltering>
+    <RuleGroup name="ptir" groupRelation="or">
+      <!-- empty exclude = log all -->
+      <ProcessCreate onmatch="exclude" />
+      <NetworkConnect onmatch="exclude" />
+      <FileCreate onmatch="exclude" />
+      <DnsQuery onmatch="exclude" />
+      <!-- 26: log deletions without archiving file contents -->
+      <FileDeleteDetected onmatch="exclude" />
+      <RegistryEvent onmatch="include">
+        <TargetObject condition="contains">\CurrentVersion\Run</TargetObject>
+        <TargetObject condition="contains">\Winlogon</TargetObject>
+      </RegistryEvent>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>
