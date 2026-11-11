@@ -10,6 +10,7 @@
   ptir verify CASE
   ptir serve CASE [--port 8000]
   ptir eval CASE GROUND_TRUTH.json
+  ptir eval-batch ROOT [--out DIR] [--reviewed-only]
 """
 from __future__ import annotations
 
@@ -60,6 +61,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("eval", help="score a case against ground truth")
     p.add_argument("case"); p.add_argument("ground_truth")
+
+    p = sub.add_parser("eval-batch", help="score every analysed run under ROOT and aggregate")
+    p.add_argument("root", help="folder of runs: ROOT/<run>/ground_truth.json and ROOT/<run>/case/")
+    p.add_argument("--out", help="write results.json and per_run.csv here (default: ROOT/results)")
+    p.add_argument("--case-name", default="case")
+    p.add_argument("--reviewed-only", action="store_true", help="skip runs whose labels were not reviewed")
 
     a = ap.parse_args(argv)
 
@@ -137,6 +144,16 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "eval":
         from .evaluate import evaluate_case
         print(json.dumps(evaluate_case(Case(a.case), json.loads(Path(a.ground_truth).read_text())), indent=2))
+    elif a.cmd == "eval-batch":
+        from .batch import evaluate_runs, find_runs, summary_lines, write_report
+        runs = find_runs(a.root, a.case_name)
+        if not runs:
+            print(f"no runs under {a.root} with ground_truth.json and {a.case_name}/case.json", file=sys.stderr)
+            return 1
+        report = evaluate_runs(runs, a.case_name, a.reviewed_only)
+        j, c = write_report(report, a.out or Path(a.root) / "results")
+        print("\n".join(summary_lines(report)))
+        print(f"\nwrote {j} and {c}")
     return 0
 
 

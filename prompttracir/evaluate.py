@@ -46,6 +46,11 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dic
         "abstention_rate": round(sum(p == "unknown" for _, p in rows) / len(rows), 3) if rows else None,
         "rows": [{"gold": g, "pred": p} for g, p in rows],
     }
+    if "tool_process_links" in gt:   # written by harness/label_run.py from child PID + Sysmon
+        links = case.read_output("tool_links.json") or []
+        pred_links = {(f"tool_call:{l['tool_call_id']}", l["process_guid"]) for l in links}
+        gold_links = {(tc, g) for tc, g in gt["tool_process_links"].items()}
+        out["tool_process_links"] = prf(pred_links, gold_links)
     pred_imp = {i["destination"]: i["level"] for i in impact}
     out["impact"] = {d: {"gold": lvl, "pred": pred_imp.get(d, "missing")}
                      for d, lvl in gt.get("exfiltration", {}).items()}
