@@ -97,13 +97,18 @@ class Case:
         Returns the evidence id (SHA-256)."""
         src = Path(path)
         digest = sha256_file(src)
+        meta = self.meta
+        if digest in meta["evidence"]:
+            # Same bytes already preserved: keep the first record (and its ingest state).
+            self._custody("evidence_duplicate", {"sha256": digest, "kind": kind,
+                                                 "original_path": str(src.resolve())})
+            return digest
         dest_dir = self.evidence_dir / digest
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / src.name
         if not dest.exists():
             shutil.copy2(src, dest)
             os.chmod(dest, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-        meta = self.meta
         meta["evidence"][digest] = {
             "kind": kind, "file": str(dest.relative_to(self.root)), "original_path": str(src.resolve()),
             "size": src.stat().st_size, "added": _now(),
@@ -111,6 +116,11 @@ class Case:
         self._save_meta(meta)
         self._custody("evidence_added", {"sha256": digest, "kind": kind, "original_path": str(src.resolve())})
         return digest
+
+    def add_evidence_dir(self, path: str | Path, kind: str) -> list[str]:
+        """Add every file under a directory (recursively, in sorted order) with the same kind."""
+        root = Path(path)
+        return [self.add_evidence(f, kind) for f in sorted(root.rglob("*")) if f.is_file()]
 
     def verify_evidence(self) -> dict[str, bool]:
         """Re-hash every preserved file and report whether it still matches."""
