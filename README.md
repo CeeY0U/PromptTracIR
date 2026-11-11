@@ -13,8 +13,9 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: working skeleton. The full pipeline runs end to end on synthetic evidence and on the
-> formats listed below. See [What is not built yet](#what-is-not-built-yet).
+> Status: v0.2.0. The full pipeline runs end to end on synthetic evidence and on the formats
+> listed below; lab tooling for real runs is in place. See [ROADMAP.md](ROADMAP.md),
+> [docs/TESTING.md](docs/TESTING.md) and [What is not built yet](#what-is-not-built-yet).
 
 ---
 
@@ -24,7 +25,7 @@ contradicted, unknown) and links back to the exact raw record it came from.
 git clone <repo> && cd prompttracir
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[evtx,dev]"
-pytest -q                                               # 7 tests, no model or VM needed
+pytest -q                                               # no model or VM needed
 ```
 
 Python 3.10+. The analyst machine can be Linux, macOS or Windows; only the lab VM has to be Windows.
@@ -56,12 +57,16 @@ agent, git attributed to the human, exfiltration to `collect.attacker-lab.test` 
 | Command | What it does |
 |---|---|
 | `ptir init CASE --name N [--envelope F]` | Create a case directory. The envelope lists what the user's task legitimately needed. |
-| `ptir add CASE FILE --kind K` | Copy the file into the case, SHA-256 it, make it read-only, log chain of custody. |
+| `ptir add CASE FILE_OR_DIR --kind K` | Copy the file (or every file in a directory) into the case, SHA-256 it, make it read-only, log chain of custody. |
+| `ptir add-run RUN_DIR [--case C]` | Create a case from a lab run folder in one step (kinds from `evidence/collection.json` or file names). |
+| `ptir import-adfir CASE PACKAGE` | Verify an AgentDFIR `.adfir` package and import its Claude Code transcripts. |
+| `ptir kinds` | List evidence kinds and whether each is parsed or preserved only. |
 | `ptir ingest CASE` | Parse evidence into canonical events (DuckDB). |
 | `ptir analyze CASE [options]` | Correlate, attribute, build the graph, run rules, traceback, impact. |
 | `ptir verify CASE` | Re-hash every preserved file. |
 | `ptir serve CASE` | Analyst UI: attack-flow graph, findings, impact, timeline, raw records. |
 | `ptir eval CASE GROUND_TRUTH` | Score the case against harness ground truth. |
+| `ptir eval-batch ROOT` | Score every analysed run under `ROOT` and write `results.json` and `per_run.csv`. |
 
 `analyze` options:
 
@@ -76,13 +81,15 @@ Both expect an OpenAI-compatible server, e.g. `llama-server -m model.gguf --port
 | `--kind` | Input | Produces |
 |---|---|---|
 | `agent_trace` | `trace.jsonl` from `harness/agent.py` (format in `prompttracir/parsers/agent_trace.py`) | sessions, prompts, fragments, model calls, tool calls/results |
+| `claude_code` | Claude Code session `.jsonl` (directly, or via `ptir import-adfir`) | same as `agent_trace`, without child PIDs |
+| `otel_trace` | OTLP/JSON spans using the OpenTelemetry GenAI conventions | same as `agent_trace`; PIDs if the instrumentation sets them |
 | `agent_requests` | `requests.jsonl` from the harness | preserved only; used for replay |
 | `sysmon` | `.evtx` or JSONL from `tools/export-events.ps1` | events 1, 3, 11, 13, 22, 23, 26 |
 | `security` | same | 4624 logons, 4688 process creation |
 | `powershell` | same | 4104 script blocks |
 | `psreadline` | `ConsoleHost_history.txt` | interactive command history (no timestamps) |
 | `zeek_conn` | Zeek `conn.log` in JSON | connection byte counts |
-| `memory_image`, `pcap`, `other` | anything | hashed and preserved, not parsed yet |
+| `agent_sources`, `evtx_raw`, `memory_image`, `pcap`, `srum`, `prefetch`, `amcache`, `registry_hive`, `mft`, `usn_journal`, `triage_archive`, `adfir_meta`, `other` | see `ptir kinds` | hashed and preserved, not parsed yet; `ptir ingest` picks them up once a parser exists |
 
 ## Outputs (`CASE/output/`)
 
@@ -170,17 +177,21 @@ Isolate the VM network. Use synthetic secrets only.
 
 ### One run
 
+The full procedure, with the attacker box, scenario setup and the paired human session, is in
+[docs/TESTING.md](docs/TESTING.md#part-4-one-real-lab-run). In short, on the lab VM:
+
 ```powershell
+python -m harness.scenario prepare harness\scenarios\web_exfil_01.json --files-only   # secrets, poisoned files
+.\tools\collect-run.ps1 -Phase Start -RunDir C:\lab\runs\run01             # elevated
 $env:PTIR_LAB = "1"
-$t0 = Get-Date
-python harness\agent.py "<scenario prompt>" --base-url http://127.0.0.1:8080 --model local --out runs\run01
-# paired human run: in another tab
-. .\tools\human-session.ps1 -Run run01 -OutDir runs\run01   # then TYPE the commands, then Stop-HumanSession
-.\tools\export-events.ps1 -Out runs\run01\evidence -Since $t0
-python harness\label_run.py runs\run01 harness\scenarios\web_exfil.json --sink sink_log.jsonl --human-pids <pid>
+python harness\agent.py --scenario harness\scenarios\web_exfil_01.json --base-url http://127.0.0.1:8080 --out C:\lab\runs\run01
+# second window: . .\tools\human-session.ps1 -Run run01 -OutDir C:\lab\runs\run01 -Scenario harness\scenarios\web_exfil_01.json
+.\tools\collect-run.ps1 -Phase Stop -RunDir C:\lab\runs\run01 -WinPmem C:\tools\winpmem.exe
+python harness\label_run.py C:\lab\runs\run01 --sink \\attacker\share\sink_log.jsonl
 ```
 
-Review `ground_truth.json` by hand, then ingest the run as above. Revert the snapshot between runs.
+Then, on the analyst machine: `ptir add-run runs/run01`, `ptir ingest runs/run01/case`,
+`ptir analyze runs/run01/case`, `ptir eval runs/run01/case runs/run01/ground_truth.json`.
 
 ---
 
@@ -191,7 +202,9 @@ Mapped to the proposal so the team can split it up:
 | Proposal item | Status | Notes |
 |---|---|---|
 | Case format, hashing, custody, canonical schema | done | |
-| Agent trace + harness with child-PID capture and request logging | done | plain loop; LangGraph optional |
+| Agent trace + harness with child-PID capture and request logging | done | plain loop; LangGraph optional; raw source bytes kept (v0.2) |
+| Scenario schema, setup, labelling with ProcessGuid and sink window | done (v0.2) | 3 scenarios; the dataset needs 60+ runs |
+| Lab collection script (logs, pcap, SRUM, Prefetch, Amcache, hives, LNK, memory, KAPE) | done (v0.2) | not yet run on a real VM |
 | Sysmon / Security / PowerShell / PSReadLine / Zeek parsers | done | |
 | Tool-to-process correlation, human/agent attribution | done | add 4104, logon-type, UserAssist signals |
 | Provenance graph, backward/forward traversal | done | |
@@ -201,17 +214,20 @@ Mapped to the proposal so the team can split it up:
 | Analyst UI | done (single page + Cytoscape) | proposal said React; either port or note the change |
 | MFT/USN, Prefetch, Amcache, SRUM, registry parsers | **todo** | write adapters for EZ Tools CSV output |
 | Volatility 3 cross-check of the transcript | **todo** | `windows.cmdline`, `windows.netscan`, memmap of the agent PID |
-| AgentDFIR / OpenTelemetry trace adapters | **todo** | convert into the trace JSONL format |
+| AgentDFIR / OpenTelemetry trace adapters | done (v0.2) | Claude Code transcripts have no PIDs; signature check left to `agentdfir verify` |
 | PromptLocate / TracLLM / AttnTrace modules | optional | add as further localizers in `traceback.py` |
 | STIX 2.1 export with ATLAS tags | **todo** | |
-| Multi-run evaluation, baselines, ablations | **todo** | aggregate `ptir eval` outputs; ablate by leaving evidence kinds out of `add` |
+| Multi-run evaluation | done (v0.2) | `ptir eval-batch` |
+| Baselines, ablations | **todo** | v0.4 adds `--without KIND`; baselines in v0.8 |
 
 ## Repository layout
 
 ```
-prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, llm, pipeline, api, cli, web/
-harness/        agent.py (traced lab agent), exfil_sink.py, label_run.py, scenarios/
-tools/          export-events.ps1, human-session.ps1, sysmon-lab.xml
+prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, llm, pipeline,
+                runs (add-run), adfir (import), batch (eval-batch), api, cli, web/
+harness/        agent.py (traced lab agent), scenario.py, exfil_sink.py, label_run.py, scenarios/
+tools/          collect-run.ps1, export-events.ps1, human-session.ps1, sysmon-lab.xml
+docs/           TESTING.md (automated tests, lab runs, acceptance checks)
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests
 ```
