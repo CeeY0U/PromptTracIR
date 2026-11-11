@@ -50,7 +50,8 @@ DEFAULT_PATTERNS: list[tuple[str, str]] = [
 
 # Ground truth and run bookkeeping: these describe the run, they are not evidence of it.
 LABEL_FILES = ["ground_truth.json", "human_*.json", "scenario.json", "sink_log*.jsonl",
-               "evidence/collection.json", "evidence/sha256sums.txt", "notes.md"]
+               "evidence/collection.json", "evidence/sha256sums.txt", "evidence/collect_state.json",
+               "notes.md"]
 
 
 def _match(rel: str, pattern: str) -> bool:
