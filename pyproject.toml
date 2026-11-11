@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompttracir"
-version = "0.1.1"
+version = "0.2.0"
 description = "Incident reconstruction and attribution for prompt-injection attacks on AI agents"
 requires-python = ">=3.10"
 dependencies = [

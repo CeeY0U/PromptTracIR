@@ -84,6 +84,8 @@ Goal: replace "works on synthetic data" with "works on a real Windows 11 run".
 
 Done when: one real benign run and one real injected run go through add, ingest, analyze and eval; one Claude Code transcript imports through the AgentDFIR adapter; a sanitised real run replaces the synthetic sample as a test fixture.
 
+Status (2026-11-11): the code is in place and tested on synthetic data: `collect-run.ps1`, raw source preservation, scenario schema and set, richer `label_run.py`, `ptir add-run`, AgentDFIR, Claude Code and OpenTelemetry importers, `ptir eval-batch`. What remains needs the lab VM: the real runs and fixes they expose. Steps and the acceptance checklist are in `docs/TESTING.md`.
+
 ### v0.3: Windows forensic normalizers (Phase 2)
 
 Goal: every evidence kind in the proposal's Table I produces canonical events.
@@ -108,6 +110,7 @@ Goal: defensible agent / human / mixed / unknown labels with numbers.
 - Move weights from `correlate.W` into a config file. Tune on the training split only and record the final values.
 - Metrics in `eval-batch`: tool-to-process edge precision, recall, F1; macro-F1; calibration error; abstention rate; error by evidence condition.
 - `ptir analyze --without <kind>` so ablations are a flag, not a re-ingest.
+- Runtime identification for traces without PIDs (Claude Code): find the `claude`/`node` process by start time, user and working directory, so its tool calls can be linked to processes. Until then, Claude Code runs are labelled with `label_run.py --agent-pids`.
 
 Done when, on the training split collected so far: tool-to-process precision is at least 0.95 where ProcessGuid or child PID exists, and attribution macro-F1 is at least 0.85 on complete-evidence runs.
 
