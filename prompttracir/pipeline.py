@@ -8,12 +8,10 @@ from .case import Case
 from .correlate import ProcessIndex, attribute_processes, find_sessions, link_tool_calls
 from .graph import ProvGraph, build_graph
 from .impact import assess
-from .parsers import PARSERS
+from .parsers import PARSERS, PRESERVE_ONLY
 from .schema import NodeKind
 from .scope import first_deviation, run_rules
 from .traceback import Replayer, run_traceback
-
-PRESERVE_ONLY = {"agent_requests", "memory_image", "pcap", "other"}   # hashed and kept, not parsed into events
 
 
 def ingest(case: Case) -> dict[str, int]:
@@ -21,9 +19,11 @@ def ingest(case: Case) -> dict[str, int]:
     meta = case.meta
     for digest, info in meta["evidence"].items():
         kind = info["kind"]
-        if kind in PRESERVE_ONLY or info.get("ingested"):
+        if info.get("ingested"):
             continue
         if kind not in PARSERS:
+            if kind in PRESERVE_ONLY:
+                continue   # preserved only; ingested automatically once a parser exists
             raise ValueError(f"no parser for evidence kind '{kind}' (known: {sorted(PARSERS)})")
         n = case.store_events(PARSERS[kind](case.evidence_path(digest), digest))
         counts[digest[:12] + f" ({kind})"] = n

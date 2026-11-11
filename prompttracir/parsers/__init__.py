@@ -15,6 +15,27 @@ PARSERS = {
     "zeek_conn": zeek.parse,               # Zeek conn.log in JSON format
 }
 
+# Kinds that are hashed and preserved but not parsed into events (yet). Collect them
+# anyway: once a parser lands, `ptir ingest` picks up every file of that kind that was
+# never ingested, so runs captured today can be re-analysed by later versions.
+PRESERVE_ONLY = {
+    "agent_requests": "full model request per model call (harness requests.jsonl), used for replay",
+    "agent_sources": "original bytes of fetched pages and read files (harness sources/)",
+    "evtx_raw": "raw .evtx copy kept for custody when the JSONL export is the parsed copy",
+    "memory_image": "full memory image (WinPmem, hypervisor snapshot)",
+    "pcap": "packet capture (pcap, pcapng, pktmon .etl)",
+    "srum": "SRUDB.dat and its SOFTWARE hive",
+    "prefetch": "C:\\Windows\\Prefetch\\*.pf",
+    "amcache": "Amcache.hve and its transaction logs",
+    "registry_hive": "NTUSER.DAT, UsrClass.dat, SYSTEM, SOFTWARE and their logs",
+    "mft": "$MFT",
+    "usn_journal": "$UsnJrnl:$J",
+    "triage_archive": "KAPE or Velociraptor triage output",
+    "other": "anything else worth preserving",
+}
+
+KNOWN_KINDS = set(PARSERS) | set(PRESERVE_ONLY)
+
 _FRAC = re.compile(r"(\.\d{6})\d+")
 
 

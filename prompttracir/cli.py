@@ -1,7 +1,9 @@
 """Command-line interface.
 
   ptir init CASE --name NAME [--envelope envelope.json]
-  ptir add CASE FILE --kind {agent_trace,agent_requests,sysmon,security,powershell,psreadline,zeek_conn,memory_image,pcap,other}
+  ptir add CASE FILE_OR_DIR --kind KIND          (ptir kinds lists them)
+  ptir add-run RUN_DIR [--case CASE] [--scenario S.json]
+  ptir kinds
   ptir ingest CASE
   ptir analyze CASE [--replay-url URL --replay-model M] [--llm-url URL --llm-model M]
   ptir verify CASE
@@ -25,8 +27,17 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("init", help="create a case directory")
     p.add_argument("case"); p.add_argument("--name", required=True); p.add_argument("--envelope")
 
-    p = sub.add_parser("add", help="preserve and hash an evidence file")
+    p = sub.add_parser("add", help="preserve and hash an evidence file (or every file in a directory)")
     p.add_argument("case"); p.add_argument("file"); p.add_argument("--kind", required=True)
+
+    p = sub.add_parser("add-run", help="create/extend a case from a lab run folder")
+    p.add_argument("run_dir")
+    p.add_argument("--case", help="case directory (default: RUN_DIR/case)")
+    p.add_argument("--scenario", help="scenario file for the envelope (default: RUN_DIR/scenario.json)")
+    p.add_argument("--name")
+    p.add_argument("--dry-run", action="store_true", help="show what would be added")
+
+    sub.add_parser("kinds", help="list evidence kinds")
 
     p = sub.add_parser("ingest", help="parse evidence into canonical events")
     p.add_argument("case")
@@ -52,8 +63,33 @@ def main(argv: list[str] | None = None) -> int:
         Case.create(a.case, a.name, env)
         print(f"case created at {a.case}")
     elif a.cmd == "add":
-        d = Case(a.case).add_evidence(a.file, a.kind)
-        print(f"{a.kind}: {d}")
+        from .parsers import KNOWN_KINDS
+        if a.kind not in KNOWN_KINDS:
+            print(f"unknown kind '{a.kind}'. Run `ptir kinds` to list them.", file=sys.stderr)
+            return 2
+        c = Case(a.case)
+        if Path(a.file).is_dir():
+            digests = c.add_evidence_dir(a.file, a.kind)
+            print(f"{a.kind}: {len(digests)} files from {a.file}")
+        else:
+            print(f"{a.kind}: {c.add_evidence(a.file, a.kind)}")
+    elif a.cmd == "add-run":
+        from .runs import add_run, plan
+        case_dir = a.case or str(Path(a.run_dir) / "case")
+        if a.dry_run:
+            for f, k in plan(a.run_dir):
+                print(f"{k:15} {f}")
+            return 0
+        _, added = add_run(case_dir, a.run_dir, a.scenario, a.name)
+        for f, k, d in added:
+            print(f"{k:15} {d[:12]}  {Path(f).relative_to(a.run_dir).as_posix()}")
+        print(f"{len(added)} files added to {case_dir}")
+    elif a.cmd == "kinds":
+        from .parsers import PARSERS, PRESERVE_ONLY
+        for k in sorted(PARSERS):
+            print(f"{k:16} parsed")
+        for k, desc in sorted(PRESERVE_ONLY.items()):
+            print(f"{k:16} preserved only: {desc}")
     elif a.cmd == "ingest":
         from .pipeline import ingest
         for k, n in ingest(Case(a.case)).items():
