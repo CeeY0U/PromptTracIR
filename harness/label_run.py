@@ -18,6 +18,12 @@ Review every label by hand, then set "reviewed": true, before using a run in the
     python harness/label_run.py RUN_DIR [--scenario S.json] [--sink sink_log.jsonl]
                                 [--human-file human_run01.json] [--human-pids 3500]
                                 [--sysmon RUN_DIR/evidence/sysmon.jsonl]
+                                [--trace FILE --trace-format agent_trace|claude_code|otel_trace]
+                                [--agent-pids 6120]
+
+Claude Code and OpenTelemetry runs are labelled from their own trace (converted with the
+same adapters PromptTracIR uses). Claude Code records no PIDs: pass the PID of the
+claude/node process with --agent-pids so its Sysmon descendants are labelled "agent".
 
 Defaults: scenario RUN_DIR/scenario.json, human files RUN_DIR/human_*.json, Sysmon
 RUN_DIR/evidence/sysmon.jsonl, sink RUN_DIR/sink_log.jsonl when they exist.
@@ -92,9 +98,23 @@ def sink_records(path: Path, lo: datetime, hi: datetime) -> list[dict]:
     return out
 
 
+def load_trace(path: Path, fmt: str = "agent_trace") -> list[dict]:
+    """Trace records in the harness format, whatever format the run produced."""
+    if fmt == "agent_trace":
+        return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    if fmt == "claude_code":
+        from prompttracir.parsers.claude_code import convert
+    elif fmt == "otel_trace":
+        from prompttracir.parsers.otel import convert
+    else:
+        raise ValueError(f"unknown trace format {fmt}")
+    return [rec for _, _, rec in convert(path)]
+
+
 def label(run: Path, sc: dict, sink: Path | None = None, human_pids: list[int] | None = None,
-          sysmon: Path | None = None, sink_grace_s: float = 120.0) -> dict:
-    recs = [json.loads(l) for l in (run / "trace.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+          sysmon: Path | None = None, sink_grace_s: float = 120.0, trace: Path | None = None,
+          trace_format: str = "agent_trace", agent_pids: list[int] | None = None) -> dict:
+    recs = load_trace(trace or run / "trace.jsonl", trace_format)
     start = next((r for r in recs if r["type"] == "session_start"), {})
     t_lo = _ts(start["ts"]) if start else _ts(recs[0]["ts"])
     t_hi = max(_ts(r["ts"]) for r in recs)
@@ -163,7 +183,8 @@ def label(run: Path, sc: dict, sink: Path | None = None, human_pids: list[int] |
         "first_deviation": f"tool_call:{first['tool_call_id']}" if first else None,
         "malicious_details": details,
         "tool_process_links": links,
-        "agent_runtime_pids": [start["pid"]] if start.get("pid") else [],
+        "agent_runtime_pids": sorted(set(agent_pids or []) | ({start["pid"]} if start.get("pid") else set())),
+        "trace_format": trace_format,
         "human_shell_pids": sorted(set(human_pids or [])),
         "exfiltration": exfil,
         "auto_labelled": True, "reviewed": False,
@@ -179,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sink"); ap.add_argument("--sysmon")
     ap.add_argument("--human-file", nargs="*", default=None)
     ap.add_argument("--human-pids", type=int, nargs="*", default=[])
+    ap.add_argument("--trace", help="trace file (default: RUN_DIR/trace.jsonl)")
+    ap.add_argument("--trace-format", default="agent_trace", choices=["agent_trace", "claude_code", "otel_trace"])
+    ap.add_argument("--agent-pids", type=int, nargs="*", default=[],
+                    help="agent runtime PIDs when the trace has none (Claude Code)")
     ap.add_argument("--sink-grace", type=float, default=120.0,
                     help="seconds after the last trace record during which sink hits still count")
     a = ap.parse_args(argv)
@@ -195,7 +220,11 @@ def main(argv: list[str] | None = None) -> int:
     sink = Path(a.sink) if a.sink else run / "sink_log.jsonl"
     sysmon = Path(a.sysmon) if a.sysmon else run / "evidence" / "sysmon.jsonl"
 
-    gt = label(run, sc, sink, pids, sysmon, a.sink_grace)
+    gt = label(run, sc, sink, pids, sysmon, a.sink_grace, Path(a.trace) if a.trace else None,
+               a.trace_format, a.agent_pids)
+    if a.trace_format == "claude_code" and not a.agent_pids:
+        print("note: no --agent-pids; Claude Code traces carry no PID, so no process will be gold-labelled agent",
+              file=sys.stderr)
     if not sysmon.exists():
         print(f"note: {sysmon} not found; tool_process_links left empty", file=sys.stderr)
     if not sink.exists() and sc.get("exfil_destinations"):
