@@ -2,13 +2,21 @@
 
 Record types (all carry "type", "ts" ISO-8601 UTC, "session_id"):
 
-  session_start     {"agent", "model", "pid", "process_guid"?, "host"?, "user"?}
+  session_start     {"agent", "model", "pid", "process_guid"?, "image"?, "host"?, "user"?, "scenario_id"?}
   user_prompt       {"span_id", "text"}
-  context_fragment  {"fragment_id", "tool_call_id"?, "source": {"kind","uri","sha256"}, "text", "index"}
+  context_fragment  {"fragment_id", "tool_call_id"?, "text", "index",
+                     "source": {"kind", "uri", "sha256", "acquired"?, "text_sha256"?,
+                                "raw_sha256"?, "raw_size"?}}
   model_call        {"model_call_id", "input_fragments": [...], "request_ref"?}
   tool_call         {"tool_call_id", "model_call_id", "tool", "args"}
   tool_result       {"tool_call_id", "child_pid"?, "child_process_guid"?, "exit_code"?, "output_preview"?,
-                     "files_read"?: [...], "files_written"?: [...], "urls"?: [...]}
+                     "files_read"?: [...], "files_written"?: [...], "urls"?: [...],
+                     "source_raw"?: {"sha256", "size", "path"}, "http"?: {...}}
+  source_rendered   {"tool_call_id", "uri", "model_visible_sha256"}   (preserved, not parsed)
+
+Source hashes: raw_sha256 is the bytes as acquired (kept under sources/ by the
+harness), text_sha256 the decoded text, and source_rendered the text the model
+actually received. Comparing them shows what parsing or truncation changed.
 
 Write an adapter that converts other formats (AgentDFIR, OpenTelemetry) into these
 records rather than teaching the rest of the pipeline about each format.
@@ -52,7 +60,9 @@ def parse(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
                 yield CanonicalEvent(
                     event_id=eid, action=Action.SESSION_START, pid=r.get("pid"),
                     process_guid=_g(r.get("process_guid")), host=r.get("host"), user=r.get("user"),
-                    attrs={"agent": r.get("agent"), "model": r.get("model")}, **base)
+                    image=r.get("image"),
+                    attrs={"agent": r.get("agent"), "model": r.get("model"),
+                           "scenario_id": r.get("scenario_id")}, **base)
             elif t == "user_prompt":
                 yield CanonicalEvent(
                     event_id=eid, action=Action.USER_PROMPT,
@@ -79,5 +89,6 @@ def parse(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
                     event_id=eid, action=Action.TOOL_RESULT, tool_call_id=r["tool_call_id"],
                     pid=r.get("child_pid"), process_guid=_g(r.get("child_process_guid")),
                     attrs={k: r.get(k) for k in ("exit_code", "output_preview", "files_read",
-                                                 "files_written", "urls", "error")}, **base)
+                                                 "files_written", "urls", "error", "source_raw",
+                                                 "http")}, **base)
             # unknown record types are ignored on purpose (forward compatibility)
