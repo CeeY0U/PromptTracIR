@@ -4,6 +4,7 @@ A run folder is what the harness and tools/collect-run.ps1 leave behind:
 
     runs/run01/
       trace.jsonl  requests.jsonl  sources/        harness/agent.py
+      claude_session.jsonl / otel.json             other agents' traces (copied in by hand)
       scenario.json                                copied by the harness when --scenario is used
       ground_truth.json  human_run01.json          labels: never added as evidence
       evidence/collection.json                     written by collect-run.ps1 (path -> kind)
@@ -27,6 +28,9 @@ from .parsers import KNOWN_KINDS
 DEFAULT_PATTERNS: list[tuple[str, str]] = [
     ("trace.jsonl", "agent_trace"),
     ("requests.jsonl", "agent_requests"),
+    ("claude_session*.jsonl", "claude_code"),
+    ("otel*.json", "otel_trace"),
+    ("otel*.jsonl", "otel_trace"),
     ("sources/*", "agent_sources"),
     ("evidence/sysmon.jsonl", "sysmon"),
     ("evidence/security.jsonl", "security"),

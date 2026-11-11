@@ -5,12 +5,13 @@ legitimately needs (the envelope), the injected payload if any, and how to tell
 whether the attack worked. See harness/scenarios/README.md for the field guide.
 
     python -m harness.scenario validate harness/scenarios/*.json
-    python -m harness.scenario prepare harness/scenarios/web_exfil_01.json --web-root C:\\lab\\www
+    python -m harness.scenario prepare S.json --files-only                  # on the lab VM
+    python -m harness.scenario prepare S.json --web-only --web-root /srv/www # on the attacker box
     python -m harness.scenario prepare ... --dry-run        # show what would be written
 
 `prepare` writes the scenario's setup files (synthetic secrets, poisoned documents)
-and web pages, substituting {{payload}} and {{canary}}. Run it inside the lab VM
-(and on the lab web server for web pages) after reverting to the clean snapshot.
+and web pages, substituting {{payload}} and {{canary}}. Setup files go on the lab VM
+(after reverting to the clean snapshot); web pages go on the lab web server.
 """
 from __future__ import annotations
 
@@ -105,12 +106,14 @@ def render(text: str, sc: Scenario) -> str:
     return out.replace("{{canary}}", sc.canary or "")
 
 
-def prepare(sc: Scenario, web_root: str | None, dry_run: bool = False) -> list[str]:
+def prepare(sc: Scenario, web_root: str | None, dry_run: bool = False, files: bool = True,
+            web: bool = True) -> list[str]:
     actions = []
-    targets = [(Path(f.path), render(f.content, sc)) for f in sc.setup.files]
-    if sc.setup.web_pages:
+    targets = [(Path(f.path), render(f.content, sc)) for f in sc.setup.files] if files else []
+    if sc.setup.web_pages and web:
         if not web_root:
-            raise SystemExit("this scenario has web pages: pass --web-root (folder served by the lab web server)")
+            raise SystemExit("this scenario has web pages: pass --web-root (folder served by the lab web "
+                             "server), or --files-only on the lab VM")
         targets += [(Path(web_root) / p.path, render(p.content, sc)) for p in sc.setup.web_pages]
     for dest, content in targets:
         actions.append(f"write {dest} ({len(content)} chars)")
@@ -126,6 +129,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("validate"); p.add_argument("files", nargs="+")
     p = sub.add_parser("prepare"); p.add_argument("file"); p.add_argument("--web-root")
     p.add_argument("--dry-run", action="store_true")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--files-only", action="store_true", help="only the VM setup files")
+    g.add_argument("--web-only", action="store_true", help="only the web pages (needs --web-root)")
     a = ap.parse_args(argv)
     if a.cmd == "validate":
         bad = 0
@@ -138,9 +144,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"FAIL {f}\n     {e}")
         return 1 if bad else 0
     sc = load(a.file)
-    if not a.dry_run and sys.platform != "win32" and sc.setup.files:
-        print("warning: setup paths are Windows paths; run prepare inside the lab VM", file=sys.stderr)
-    for line in prepare(sc, a.web_root, a.dry_run):
+    files, web = not a.web_only, not a.files_only
+    if not a.dry_run and files and sys.platform != "win32" and sc.setup.files:
+        print("warning: setup paths are Windows paths; run prepare --files-only inside the lab VM", file=sys.stderr)
+    for line in prepare(sc, a.web_root, a.dry_run, files, web):
         print(("[dry-run] " if a.dry_run else "") + line)
     return 0
 

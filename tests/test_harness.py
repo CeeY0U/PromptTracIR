@@ -186,3 +186,26 @@ def test_label_cli_reads_run_folder_defaults(sample, tmp_path):
     assert label_main([str(run)]) == 0
     gt = json.loads((run / "ground_truth.json").read_text())
     assert gt["human_shell_pids"] == [3500] and gt["tool_process_links"]
+
+
+def test_prepare_split_between_vm_and_web_server(tmp_path, capsys):
+    f = ROOT / "harness" / "scenarios" / "web_exfil_01.json"
+    assert scenario_mod.main(["prepare", str(f), "--files-only", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "api_keys.txt" in out and "guide.html" not in out
+    assert scenario_mod.main(["prepare", str(f), "--web-only", "--web-root", str(tmp_path)]) == 0
+    assert (tmp_path / "guide.html").exists() and len(list(tmp_path.iterdir())) == 1
+    with pytest.raises(SystemExit):
+        scenario_mod.main(["prepare", str(f), "--dry-run"])          # web pages need --web-root
+
+
+def test_label_claude_code_run(tmp_path):
+    run = tmp_path / "cc_run"
+    run.mkdir()
+    cc = ROOT / "tests" / "fixtures" / "claude_code_session.jsonl"
+    sc = json.loads((ROOT / "harness" / "scenarios" / "web_exfil_01.json").read_text())
+    gt = label(run, sc, trace=cc, trace_format="claude_code", agent_pids=[6120])
+    assert gt["injected_fragments"] == ["fragment:toolu_01-2"]
+    assert gt["malicious_tool_calls"] == ["tool_call:toolu_02"] and gt["first_deviation"] == "tool_call:toolu_02"
+    assert gt["agent_runtime_pids"] == [6120] and gt["trace_format"] == "claude_code"
+    assert gt["tool_process_links"] == {}          # no child PIDs in Claude Code transcripts
