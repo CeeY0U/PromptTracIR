@@ -4,10 +4,12 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from . import agent_trace, psreadline, windows, zeek
+from . import agent_trace, claude_code, otel, psreadline, windows, zeek
 
 PARSERS = {
     "agent_trace": agent_trace.parse,      # PromptTracIR harness JSONL trace
+    "claude_code": claude_code.parse,      # Claude Code session transcript (also via ptir import-adfir)
+    "otel_trace": otel.parse,              # OTLP/JSON spans using the GenAI semantic conventions
     "sysmon": windows.parse,               # .evtx or JSONL export of Sysmon/Operational
     "security": windows.parse,             # .evtx or JSONL export of Security (4624, 4688)
     "powershell": windows.parse,           # .evtx or JSONL export of PowerShell/Operational (4104)
@@ -21,6 +23,7 @@ PARSERS = {
 PRESERVE_ONLY = {
     "agent_requests": "full model request per model call (harness requests.jsonl), used for replay",
     "agent_sources": "original bytes of fetched pages and read files (harness sources/)",
+    "adfir_meta": "AgentDFIR package metadata: case.json, manifest, logs, SHA256SUMS, SEAL.sig",
     "evtx_raw": "raw .evtx copy kept for custody when the JSONL export is the parsed copy",
     "memory_image": "full memory image (WinPmem, hypervisor snapshot)",
     "pcap": "packet capture (pcap, pcapng, pktmon .etl)",

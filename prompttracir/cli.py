@@ -4,6 +4,7 @@
   ptir add CASE FILE_OR_DIR --kind KIND          (ptir kinds lists them)
   ptir add-run RUN_DIR [--case CASE] [--scenario S.json]
   ptir kinds
+  ptir import-adfir CASE PACKAGE_DIR [--force]
   ptir ingest CASE
   ptir analyze CASE [--replay-url URL --replay-model M] [--llm-url URL --llm-model M]
   ptir verify CASE
@@ -38,6 +39,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="show what would be added")
 
     sub.add_parser("kinds", help="list evidence kinds")
+
+    p = sub.add_parser("import-adfir", help="verify an AgentDFIR package and import its agent transcripts")
+    p.add_argument("case"); p.add_argument("package")
+    p.add_argument("--force", action="store_true", help="import even if SHA256SUMS verification fails")
 
     p = sub.add_parser("ingest", help="parse evidence into canonical events")
     p.add_argument("case")
@@ -84,6 +89,22 @@ def main(argv: list[str] | None = None) -> int:
         for f, k, d in added:
             print(f"{k:15} {d[:12]}  {Path(f).relative_to(a.run_dir).as_posix()}")
         print(f"{len(added)} files added to {case_dir}")
+    elif a.cmd == "import-adfir":
+        from .adfir import PackageError, import_package
+        try:
+            res = import_package(Case(a.case), a.package, a.force)
+        except PackageError as e:
+            print(e, file=sys.stderr)
+            return 1
+        for p_ in res["verification_problems"]:
+            print(f"WARNING {p_}")
+        for it in res["imported"]:
+            print(f"claude_code     {it['artifact_id'][:12]}  {it['logical_path']}")
+        for it in res["unreadable"]:
+            print(f"UNREADABLE      {it['artifact_id'][:12]}  {it['logical_path']}: {it['error']}")
+        for k, n in res["skipped_by_product"].items():
+            print(f"skipped         {n} artifact(s) of {k} (no parser yet)")
+        print(f"{len(res['imported'])} transcript(s) imported from AgentDFIR case {res['adfir_case_id']}")
     elif a.cmd == "kinds":
         from .parsers import PARSERS, PRESERVE_ONLY
         for k in sorted(PARSERS):
