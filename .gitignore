@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated sample evidence (rebuild with: python samples/make_sample.py)
+samples/scenario_exfil/
+
+# Lab output. Evidence and cases never go into git, even synthetic ones:
+# they are large, and a real run can contain data you did not mean to publish.
+cases/
+runs/
+sink_log.jsonl
+*.duckdb
+*.duckdb.wal
+
+# Raw evidence formats, in case one is saved outside runs/ by mistake
+*.raw
+*.mem
+*.dmp
+*.vmem
+*.pcap
+*.pcapng
+*.etl
