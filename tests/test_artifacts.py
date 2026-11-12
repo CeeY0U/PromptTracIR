@@ -184,3 +184,41 @@ def test_parsers_tolerate_empty_and_header_only_files(tmp_path, kind):
     empty = tmp_path / "empty.csv"
     empty.write_text("" if kind.startswith("vol_") else "A,B,C\n")
     assert list(PARSERS[kind](empty, EID)) == []
+
+
+def test_timeline_api_shows_new_events(tmp_path):
+    from fastapi.testclient import TestClient
+    from prompttracir.api import create_app
+
+    c = Case.create(tmp_path / "case", "v03")
+    c.add_evidence(FX / "20261029070100_PECmd_Output.csv", "ez_prefetch")
+    c.add_evidence(FX / "vol" / "vol_netscan.json", "vol_netscan")
+    ingest(c)
+    rows = TestClient(create_app(c)).get("/api/timeline").json()
+    pf = [r for r in rows if r["source"] == "prefetch"]
+    assert pf and all(r["detail"] for r in pf)                               # program path, not blank
+    assert any(r["detail"] == "203.0.113.50:443" for r in rows if r["action"] == "mem_conn")
+
+
+def test_volatility_ignores_rows_that_are_not_objects(tmp_path):
+    # Found by fuzzing: a hand-edited or foreign JSON file must not crash ingest.
+    f = tmp_path / "odd.json"
+    f.write_text('[null, 3, "x", {"PID": "abc"}, {"PID": 7, "__children": "bad", "ImageFileName": 5}]')
+    assert [e.pid for e in volatility.parse_pslist(f, EID)] == [7]
+    assert volatility.parse_pslist(f, EID).__next__().image is None
+    assert [e.pid for e in volatility.parse_cmdline(f, EID)] == [7]
+    assert list(volatility.parse_netscan(f, EID)) == []
+
+
+def test_store_events_bulk_insert_round_trip_and_replace(tmp_path, monkeypatch):
+    c = Case.create(tmp_path / "case", "store")
+    monkeypatch.setattr(Case, "STORE_CHUNK", 3)                              # force several chunks
+    evs = list(ez.parse_mft(FX / "20261029070100_MFTECmd_$MFT_Output.csv", EID))
+    evs += list(volatility.parse_netscan(FX / "vol" / "vol_netscan.json", EID))
+    changed = evs[0].model_copy(update={"object": "replaced"})               # same id, later chunk
+    assert c.store_events(evs + [changed]) == len(evs) + 1
+    back = {e.event_id: e for e in c.load_events()}
+    assert len(back) == len(evs) and back[evs[0].event_id].object == "replaced"
+    for e in evs[1:]:
+        assert back[e.event_id].model_dump() == e.model_dump()               # exact round trip
+    assert not list((tmp_path / "case").glob(".ingest-*"))                   # temp file removed

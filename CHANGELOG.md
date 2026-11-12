@@ -23,6 +23,16 @@ CSV / JSON layout; not yet checked against output from a real lab run.
   `RawRef.ingested_at`, set by `ptir ingest`; `attrs.ts_meaning` on every new event.
 - `tests/test_artifacts.py` and fixtures under `tests/fixtures/v03/`.
 
+### Fixed
+- `Case.store_events` inserts through `read_json` on a temporary NDJSON file in chunks of 50k
+  instead of `executemany`: 400k events from a 200k-row $MFT ingest in about 25 s instead of
+  roughly 45 min. Same INSERT OR REPLACE semantics (a later duplicate id wins).
+- Volatility parsers skip JSON values that are not TreeGrid rows and non-numeric PIDs instead of
+  crashing (found by fuzzing).
+- Timeline API: rows that only name a program (Prefetch, Amcache, SRUM, UserAssist, pslist)
+  show the program in `detail` instead of a blank.
+- `parse-artifacts.ps1` does not append duplicate lines to `sha256sums.txt` when re-run.
+
 ### Unchanged
 - Raw kinds (`mft`, `prefetch`, `amcache`, `srum`, `registry_hive`, `memory_image`, ...) stay
   preserve-only. The new events carry no ProcessGuid, so graph, attribution and the quick-start
