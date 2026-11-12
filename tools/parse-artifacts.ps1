@@ -100,6 +100,8 @@ $sums = Join-Path $Ev "sha256sums.txt"
 $prefix = (Resolve-Path $Ev).Path.TrimEnd("\") + "\"
 $new = @(Get-ChildItem -Path $Ez, $VolOut -Recurse -File -ErrorAction SilentlyContinue)
 $lines = $new | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.FullName.Substring($prefix.Length))" }
+$have = @(if (Test-Path $sums) { Get-Content $sums })
+$lines = @($lines | Where-Object { $have -notcontains $_ })   # re-running adds no duplicate lines
 if ($lines) { Add-Content -Path $sums -Value $lines -Encoding utf8 }
 
 Write-Host ""
