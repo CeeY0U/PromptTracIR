@@ -38,10 +38,27 @@ def _records(path: Path) -> Iterator[dict]:
 
     def walk(nodes):
         for n in nodes:
+            if not isinstance(n, dict):
+                continue            # not a TreeGrid row (hand-edited or foreign JSON)
             yield n
-            yield from walk(n.get("__children") or [])
+            children = n.get("__children")
+            if isinstance(children, list):
+                yield from walk(children)
 
     yield from walk(items)
+
+
+def _int(v) -> int | None:
+    if isinstance(v, bool):
+        return None
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _str(v) -> str | None:
+    return v if isinstance(v, str) and v else None
 
 
 def _time(v) -> datetime | None:
@@ -51,7 +68,7 @@ def _time(v) -> datetime | None:
         return None
     try:
         return parse_time(v)
-    except ValueError:
+    except (ValueError, TypeError, OverflowError, OSError):
         return None
 
 
@@ -72,12 +89,13 @@ def _file_time(path: Path) -> datetime:
 def parse_pslist(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
     fallback = _file_time(path)
     for i, r in enumerate(_records(path)):
-        if r.get("PID") is None:
+        pid = _int(r.get("PID"))
+        if pid is None:
             continue
         created = _time(r.get("CreateTime"))
         yield _event("vol_pslist", Action.MEM_PROCESS, created or fallback, "ms" if created else "none",
-                     evidence_id, i, pid=r.get("PID"), parent_pid=r.get("PPID"),
-                     image=r.get("ImageFileName"),
+                     evidence_id, i, pid=pid, parent_pid=_int(r.get("PPID")),
+                     image=_str(r.get("ImageFileName")),
                      attrs={"exit_time": r.get("ExitTime"), "session_id": r.get("SessionId"),
                             "threads": r.get("Threads"), "handles": r.get("Handles"),
                             "wow64": r.get("Wow64"),
@@ -93,25 +111,28 @@ def parse_cmdline(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
     ts_precision='none' (same convention as psreadline). Join to vol_pslist on PID."""
     ts = _file_time(path)
     for i, r in enumerate(_records(path)):
-        if r.get("PID") is None:
+        pid = _int(r.get("PID"))
+        if pid is None:
             continue
         args = r.get("Args")
-        readable = isinstance(args, str) and not args.lower().startswith(("required memory", "process "))
+        readable = bool(_str(args)) and not args.lower().startswith(("required memory", "process "))
         yield _event("vol_cmdline", Action.MEM_CMDLINE, ts, "none", evidence_id, i,
-                     pid=r.get("PID"), image=r.get("Process"),
+                     pid=pid, image=_str(r.get("Process")),
                      command_line=args if readable else None,
-                     attrs={"readable": readable, "note": None if readable else args,
+                     attrs={"readable": readable, "note": None if readable else _str(args),
                             "ts_meaning": "no time in artifact; memory file modified time"})
 
 
 def parse_netscan(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
     fallback = _file_time(path)
     for i, r in enumerate(_records(path)):
-        foreign = r.get("ForeignAddr")
+        if not any(k in r for k in ("Proto", "LocalAddr", "ForeignAddr")):
+            continue            # not a netscan row
+        foreign = _str(r.get("ForeignAddr"))
         created = _time(r.get("Created"))
         obj = f"{foreign}:{r.get('ForeignPort')}" if foreign not in (None, "*", "0.0.0.0", "::") else None
         yield _event("vol_netscan", Action.MEM_CONN, created or fallback, "ms" if created else "none",
-                     evidence_id, i, pid=r.get("PID"), image=r.get("Owner"), object=obj,
+                     evidence_id, i, pid=_int(r.get("PID")), image=_str(r.get("Owner")), object=obj,
                      attrs={"proto": r.get("Proto"), "local_addr": r.get("LocalAddr"),
                             "local_port": r.get("LocalPort"), "foreign_addr": foreign,
                             "foreign_port": r.get("ForeignPort"), "state": r.get("State"),
