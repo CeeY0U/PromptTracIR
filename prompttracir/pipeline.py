@@ -14,6 +14,14 @@ from .scope import first_deviation, run_rules
 from .traceback import Replayer, run_traceback
 
 
+def _stamp(events):
+    """Record ingestion time on every event's raw reference (schema v0.3)."""
+    now = datetime.now(timezone.utc).isoformat()
+    for e in events:
+        e.raw.ingested_at = now
+        yield e
+
+
 def ingest(case: Case) -> dict[str, int]:
     counts = {}
     meta = case.meta
@@ -25,7 +33,7 @@ def ingest(case: Case) -> dict[str, int]:
             if kind in PRESERVE_ONLY:
                 continue   # preserved only; ingested automatically once a parser exists
             raise ValueError(f"no parser for evidence kind '{kind}' (known: {sorted(PARSERS)})")
-        n = case.store_events(PARSERS[kind](case.evidence_path(digest), digest))
+        n = case.store_events(_stamp(PARSERS[kind](case.evidence_path(digest), digest)))
         counts[digest[:12] + f" ({kind})"] = n
         meta = case.meta
         meta["evidence"][digest]["ingested"] = True
