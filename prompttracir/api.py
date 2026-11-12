@@ -58,7 +58,8 @@ def create_app(case: Case) -> FastAPI:
     def timeline(limit: int = 2000):
         return [{"event_id": e.event_id, "ts": e.timestamp.isoformat(), "source": e.source.value,
                  "action": e.action.value, "pid": e.pid, "image": e.image,
-                 "detail": e.command_line or e.object or e.attrs.get("text", "")[:160] or e.attrs.get("tool")}
+                 "detail": (e.command_line or e.object or e.attrs.get("text", "")[:160] or e.attrs.get("tool")
+                            or e.image)}   # Prefetch, Amcache, SRUM, UserAssist, pslist only name a program
                 for e in case.load_events()[:limit]]
 
     return app
