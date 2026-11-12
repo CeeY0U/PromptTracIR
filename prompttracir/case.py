@@ -153,18 +153,39 @@ class Case:
             )
 
     def store_events(self, events: Iterable[CanonicalEvent]) -> int:
-        rows = []
+        """Bulk insert through a temporary NDJSON file and read_json. DuckDB's executemany
+        inserts row by row (about 150 rows/s), far too slow for a $MFT with 10^5-10^6 records.
+        Same semantics as before: INSERT OR REPLACE, and a later duplicate event_id wins."""
+        total, rows = 0, {}
         for e in events:
             d = e.model_dump(mode="json")
             d["attrs"] = json.dumps(d["attrs"])
             d["raw"] = json.dumps(d["raw"])
-            rows.append([d[c] for c in EVENT_COLUMNS])
-        if not rows:
-            return 0
-        cols = ", ".join(f'"{c}"' for c in EVENT_COLUMNS)
-        ph = ", ".join("?" for _ in EVENT_COLUMNS)
-        with self._connect() as con:
-            con.executemany(f"INSERT OR REPLACE INTO events ({cols}) VALUES ({ph})", rows)
+            rows[d["event_id"]] = {c: d[c] for c in EVENT_COLUMNS}
+            if len(rows) >= self.STORE_CHUNK:     # bounded memory; a later chunk still replaces
+                total += self._bulk_insert(rows)
+                rows = {}
+        return total + (self._bulk_insert(rows) if rows else 0)
+
+    STORE_CHUNK = 50_000
+
+    def _bulk_insert(self, rows: dict[str, dict]) -> int:
+        tmp = self.root / f".ingest-{os.getpid()}.ndjson"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                for r in rows.values():
+                    f.write(json.dumps(r) + "\n")
+            types = {c: ("BIGINT" if c in ("pid", "parent_pid") else "VARCHAR") for c in EVENT_COLUMNS}
+            casts = ", ".join(
+                f'CAST("{c}" AS TIMESTAMPTZ)' if c == "timestamp" else
+                f'CAST("{c}" AS JSON)' if c in ("attrs", "raw") else f'"{c}"' for c in EVENT_COLUMNS)
+            cols = ", ".join(f'"{c}"' for c in EVENT_COLUMNS)
+            with self._connect() as con:
+                con.execute(
+                    f"INSERT OR REPLACE INTO events ({cols}) SELECT {casts} FROM read_json(?, "
+                    f"format='newline_delimited', columns={types!r})", [str(tmp)])
+        finally:
+            tmp.unlink(missing_ok=True)
         return len(rows)
 
     def load_events(self, where: str = "", params: list | None = None) -> list[CanonicalEvent]:

@@ -1,0 +1,3 @@
+ApplicationName,ProgramId,FileKeyLastWriteTimestamp,SHA1,IsOsComponent,FullPath,Name,FileExtension,LinkDate,ProductName,Size,Version,ProductVersion,LongPathHash,BinaryType,IsPeFile,BinFileVersion,BinProductVersion,Usn,Language,Description,OriginalFileName,Publisher,Sha256,KeyName,AppxPackageFullName,AppxPackageRelativeId
+Unassociated,0006abc,2026-10-29 07:00:05,00001234567890abcdef1234567890abcdef12345678,False,c:\users\lab\downloads\payload.exe,payload.exe,.exe,2026-10-01 00:00:00,,4096,,,payload.exe|abc,pe64_amd64,True,,,88140100,0,,,,,0000abcd,,
+Unassociated,0006def,,0000ffffffffffffffffffffffffffffffffffffffff,True,c:\windows\system32\notimestamp.exe,notimestamp.exe,.exe,,,1,,,,pe64_amd64,True,,,0,0,,,,,0000dead,,

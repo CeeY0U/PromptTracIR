@@ -1,0 +1,4 @@
+[
+ {"Offset": 1000, "Proto": "TCPv4", "LocalAddr": "10.10.10.20", "LocalPort": 50123, "ForeignAddr": "203.0.113.50", "ForeignPort": 443, "State": "CLOSE_WAIT", "PID": 5210, "Owner": "curl.exe", "Created": "2026-10-29T07:00:05.200000+00:00", "__children": []},
+ {"Offset": 2000, "Proto": "UDPv4", "LocalAddr": "0.0.0.0", "LocalPort": 5353, "ForeignAddr": "*", "ForeignPort": 0, "State": "", "PID": 1800, "Owner": "svchost.exe", "Created": null, "__children": []}
+]

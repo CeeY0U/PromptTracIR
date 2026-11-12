@@ -1,0 +1,3 @@
+Id,Timestamp,ExeInfo,ExeInfoDescription,ExeTimestamp,SidType,Sid,UserName,UserId,AppId,BytesReceived,BytesSent,InterfaceLuid,InterfaceType,L2ProfileFlags,L2ProfileId,ProfileName
+5001,2026-10-29 08:00:00,\device\harddiskvolume3\windows\system32\curl.exe,,,UnknownOrUserSid,S-1-5-21-1-2-3-1001,LAB-PC\lab,3,412,1200,48211,1689399632855040,IF_TYPE_ETHERNET_CSMACD,0,0,
+5002,2026-10-29 08:00:00,\device\harddiskvolume3\program files\git\cmd\git.exe,,,UnknownOrUserSid,S-1-5-21-1-2-3-1001,LAB-PC\lab,3,413,0,0,1689399632855040,IF_TYPE_ETHERNET_CSMACD,0,0,

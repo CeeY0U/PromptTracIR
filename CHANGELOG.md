@@ -2,6 +2,42 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [Unreleased]
+
+Windows forensic normalizers (roadmap v0.3). Tested on synthetic fixtures that follow each tool's
+CSV / JSON layout; not yet checked against output from a real lab run.
+
+### Added
+- EZ Tools CSV parsers (`prompttracir/parsers/ez.py`): `ez_mft`, `ez_usn`, `ez_prefetch`,
+  `ez_amcache`, `ez_srum`, `ez_registry` (UserAssist, autoruns, other values), `ez_lnk`,
+  `ez_jumplist`, `ez_shellbags`.
+- Volatility 3 JSON parsers (`prompttracir/parsers/volatility.py`): `vol_pslist` (also pstree,
+  children flattened), `vol_cmdline`, `vol_netscan`; json and jsonl renderers; banner skipped.
+- `tools/parse-artifacts.ps1`: runs the EZ tools and Volatility over a collected run folder into
+  `evidence/ez/` and `evidence/vol/`, and appends their hashes to `sha256sums.txt`.
+- `ptir add-run` patterns for those outputs.
+- Schema: event sources `mft`, `usn`, `prefetch`, `amcache`, `srum`, `registry`, `lnk`,
+  `jumplist`, `shellbags`, `memory`; actions `file_modify`, `file_rename`, `file_open`,
+  `folder_open`, `program_run`, `program_present`, `gui_launch`, `autorun`, `registry_value`,
+  `net_usage`, `mem_process`, `mem_cmdline`, `mem_conn`; `ts_precision` value `h`;
+  `RawRef.ingested_at`, set by `ptir ingest`; `attrs.ts_meaning` on every new event.
+- `tests/test_artifacts.py` and fixtures under `tests/fixtures/v03/`.
+
+### Fixed
+- `Case.store_events` inserts through `read_json` on a temporary NDJSON file in chunks of 50k
+  instead of `executemany`: 400k events from a 200k-row $MFT ingest in about 25 s instead of
+  roughly 45 min. Same INSERT OR REPLACE semantics (a later duplicate id wins).
+- Volatility parsers skip JSON values that are not TreeGrid rows and non-numeric PIDs instead of
+  crashing (found by fuzzing).
+- Timeline API: rows that only name a program (Prefetch, Amcache, SRUM, UserAssist, pslist)
+  show the program in `detail` instead of a blank.
+- `parse-artifacts.ps1` does not append duplicate lines to `sha256sums.txt` when re-run.
+
+### Unchanged
+- Raw kinds (`mft`, `prefetch`, `amcache`, `srum`, `registry_hive`, `memory_image`, ...) stay
+  preserve-only. The new events carry no ProcessGuid, so graph, attribution and the quick-start
+  results are unchanged until v0.4 / v0.5 use them.
+
 ## [0.2.0] - 2026-11-11
 
 First-real-case tooling (roadmap v0.2). Everything below is tested on synthetic data; the lab

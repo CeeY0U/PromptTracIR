@@ -58,6 +58,7 @@ Expected: `44 passed`. Run one file with `pytest -q tests/test_importers.py`, or
 | `tests/test_harness.py` | v0.2 | raw source bytes kept under `sources/`; scenario schema rules; `prepare` writes and splits VM files from web pages; `label_run` matches the sample's ground truth, resolves child PID to ProcessGuid, ignores sink hits from other runs, labels legitimate and Claude Code runs |
 | `tests/test_importers.py` | v0.2 | Claude Code transcripts; OpenTelemetry GenAI spans (single document and JSONL, with and without content); AgentDFIR package import (single and chunked blobs) and 5 kinds of tampering |
 | `tests/test_batch.py` | v0.2 | `ptir eval-batch` aggregation, reviewed-only filter, report files |
+| `tests/test_artifacts.py` | v0.3 | every `ez_*` and `vol_*` parser: path joining, timestomp flags, USN Close-record selection and rename pairing, Prefetch run times and paths, Amcache SHA-1 padding, SRUM bytes, UserAssist / autorun / other registry rows, LNK / Jump List / ShellBags, Volatility pstree flattening, banner skipping and unreadable command lines; `add-run` patterns; `ingested_at`; empty files |
 
 All test data is synthetic. The AgentDFIR importer was also checked by hand against AgentDFIR's own
 conformance packages: the valid package imports, and 20 of the 24 tampered packages are rejected.
@@ -343,3 +344,28 @@ release notes.
 - [ ] `ptir eval-batch runs --reviewed-only` runs over all real runs so far (Part 6).
 - [ ] A sanitised real run (no memory image, no secrets) replaces or joins the synthetic sample as a
       test fixture.
+
+---
+
+## Part 8: v0.3 artifacts from a real run
+
+The `ez_*` and `vol_*` parsers were written against the tools' published column layouts and
+tested on synthetic fixtures. One real run confirms the columns.
+
+1. Windows machine with the run folder, the EZ tools (`Get-ZimmermanTools.ps1`, .NET 6 builds) and,
+   for memory, Volatility 3:
+   `.\tools\parse-artifacts.ps1 -RunDir C:\lab\runs\run01 -EzTools C:\tools\ez -Vol C:\tools\vol\vol.exe`
+   ($MFT and $J need `collect-run.ps1 -Kape`, or copies in `evidence\ntfs\`.)
+2. Analyst machine: `ptir add-run runs/run01 --case cases/run01`, then `ptir ingest cases/run01`.
+   Every `ez_*` / `vol_*` file should report more than 0 events.
+3. Spot checks in the UI timeline (`ptir serve cases/run01`): the agent's `curl.exe` appears as a
+   Prefetch `program_run`, a SRUM `net_usage` with bytes sent, and in `vol_pslist` / `vol_netscan`
+   if memory was taken while it ran; the human's `git status` shell appears in `vol_pslist`.
+4. If a file reports 0 events, compare its header line with the columns the parser reads
+   (`prompttracir/parsers/ez.py`), fix the parser, and add the header to the fixture.
+
+v0.3 acceptance:
+
+- [ ] `pytest -q` passes, CI green.
+- [ ] One real run: every `ez_*` / `vol_*` file it produced ingests with more than 0 events.
+- [ ] Any column fixes from that run are covered by a fixture.

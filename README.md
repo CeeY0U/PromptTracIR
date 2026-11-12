@@ -89,7 +89,21 @@ Both expect an OpenAI-compatible server, e.g. `llama-server -m model.gguf --port
 | `powershell` | same | 4104 script blocks |
 | `psreadline` | `ConsoleHost_history.txt` | interactive command history (no timestamps) |
 | `zeek_conn` | Zeek `conn.log` in JSON | connection byte counts |
-| `agent_sources`, `evtx_raw`, `memory_image`, `pcap`, `srum`, `prefetch`, `amcache`, `registry_hive`, `mft`, `usn_journal`, `triage_archive`, `adfir_meta`, `other` | see `ptir kinds` | hashed and preserved, not parsed yet; `ptir ingest` picks them up once a parser exists |
+| `ez_mft` | MFTECmd `$MFT` CSV | file created / modified ($SI times; $FN and timestomp flags in attrs) |
+| `ez_usn` | MFTECmd `$J` CSV (`-m $MFT` for paths) | file create / delete / rename / modify, one per closed change |
+| `ez_prefetch` | PECmd CSV | program run, one per recorded run time (weak for authorship) |
+| `ez_amcache` | AmcacheParser `*FileEntries.csv` | program present with SHA-1 (key last-write, not execution time) |
+| `ez_srum` | SrumECmd `NetworkUsages` CSV | bytes sent / received per app per ~1 h interval |
+| `ez_registry` | RECmd batch CSV (e.g. `Kroll_Batch.reb`) | UserAssist GUI launches, autoruns, other key/values |
+| `ez_lnk`, `ez_jumplist`, `ez_shellbags` | LECmd / JLECmd / SBECmd CSV | files opened and folders browsed through the Explorer shell |
+| `vol_pslist`, `vol_cmdline`, `vol_netscan` | Volatility 3 `-r json` / `-r jsonl` of `windows.pslist` or `pstree`, `cmdline`, `netscan` | processes, command lines, sockets from memory |
+| `agent_sources`, `evtx_raw`, `memory_image`, `pcap`, `srum`, `prefetch`, `amcache`, `registry_hive`, `mft`, `usn_journal`, `triage_archive`, `adfir_meta`, `other` | see `ptir kinds` | hashed and preserved, not parsed; the raw originals of the `ez_*` / `vol_*` outputs stay here for custody |
+
+The `ez_*` and `vol_*` kinds are derived files: run the tools on the raw artifacts
+(`tools/parse-artifacts.ps1` does all of them for a run folder) and add their output.
+Every event they produce records what its timestamp means in `attrs.ts_meaning`, and none of
+them carries a ProcessGuid, so on their own they never create observed edges in the graph;
+attribution (v0.4) and reconstruction (v0.5) use them as independent signals.
 
 ## Outputs (`CASE/output/`)
 
@@ -212,8 +226,8 @@ Mapped to the proposal so the team can split it up:
 | Leave-one-out replay traceback | done | needs real model runs to validate |
 | Local LLM classification + validated summary | done | needs prompt tuning on real runs |
 | Analyst UI | done (single page + Cytoscape) | proposal said React; either port or note the change |
-| MFT/USN, Prefetch, Amcache, SRUM, registry parsers | **todo** | write adapters for EZ Tools CSV output |
-| Volatility 3 cross-check of the transcript | **todo** | `windows.cmdline`, `windows.netscan`, memmap of the agent PID |
+| MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3, synthetic fixtures) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; needs one real lab run to confirm columns |
+| Volatility 3 cross-check of the transcript | parsers done (v0.3) | `vol_pslist`, `vol_cmdline`, `vol_netscan` ingest; the transcript cross-check itself is v0.5 |
 | AgentDFIR / OpenTelemetry trace adapters | done (v0.2) | Claude Code transcripts have no PIDs; signature check left to `agentdfir verify` |
 | PromptLocate / TracLLM / AttnTrace modules | optional | add as further localizers in `traceback.py` |
 | STIX 2.1 export with ATLAS tags | **todo** | |
@@ -226,7 +240,7 @@ Mapped to the proposal so the team can split it up:
 prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, llm, pipeline,
                 runs (add-run), adfir (import), batch (eval-batch), api, cli, web/
 harness/        agent.py (traced lab agent), scenario.py, exfil_sink.py, label_run.py, scenarios/
-tools/          collect-run.ps1, export-events.ps1, human-session.ps1, sysmon-lab.xml
+tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, sysmon-lab.xml
 docs/           TESTING.md (automated tests, lab runs, acceptance checks)
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests
