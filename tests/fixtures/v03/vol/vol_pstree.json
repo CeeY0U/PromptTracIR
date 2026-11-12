@@ -1,0 +1,11 @@
+Volatility 3 Framework 2.11.0
+
+[
+  {"PID": 4, "PPID": 0, "ImageFileName": "System", "Offset(V)": 123, "Threads": 150, "Handles": null, "SessionId": null, "Wow64": false, "CreateTime": "2026-10-29T06:00:00+00:00", "ExitTime": null, "File output": "Disabled",
+   "__children": [
+     {"PID": 5200, "PPID": 4100, "ImageFileName": "cmd.exe", "Offset(V)": 456, "Threads": 1, "Handles": null, "SessionId": 1, "Wow64": false, "CreateTime": "2026-10-29T07:00:05.050000+00:00", "ExitTime": null, "File output": "Disabled", "Path": "C:\\Windows\\System32\\cmd.exe", "Cmd": "cmd.exe /c curl.exe ...",
+      "__children": [
+        {"PID": 5210, "PPID": 5200, "ImageFileName": "curl.exe", "Offset(V)": 789, "Threads": 2, "Handles": null, "SessionId": 1, "Wow64": false, "CreateTime": "2026-10-29T07:00:05.100000+00:00", "ExitTime": null, "File output": "Disabled", "__children": []}
+      ]}
+   ]}
+]

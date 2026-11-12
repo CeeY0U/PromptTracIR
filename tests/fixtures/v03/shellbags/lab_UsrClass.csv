@@ -1,0 +1,3 @@
+BagPath,Slot,NodeSlot,MRUPosition,AbsolutePath,ShellType,Value,ChildBags,CreatedOn,ModifiedOn,AccessedOn,LastWriteTime,MFTEntry,MFTSequenceNumber,ExtensionBlockCount,FirstInteracted,LastInteracted,HasExplored,Miscellaneous
+BagMRU\0\1\2,2,12,0,My Computer\C:\Users\lab\secrets,Directory,secrets,0,2026-10-20 09:13:50,2026-10-20 09:14:03,2026-10-20 09:14:03,2026-10-29 06:57:40,98211,2,1,2026-10-20 09:13:55,2026-10-29 06:57:40,True,
+BagMRU\0\1,1,11,1,My Computer\C:\Users\lab,Directory,lab,1,,,,,,,0,,,False,
