@@ -1,6 +1,6 @@
-# Testing guide: v0.1.1 and v0.2.0
+# Testing guide: v0.1.1 to v0.3.0
 
-This guide covers every check up to v0.2.0, in the order to run them:
+This guide covers every check up to v0.3.0, in the order to run them:
 
 | Part | Where | Needs | Time |
 |---|---|---|---|
@@ -46,7 +46,7 @@ If activation is blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 pytest -q
 ```
 
-Expected: `44 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
+Expected: `80 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
 `pytest -q -k adfir_tampering`.
 
 ### 1.3 What the tests cover
@@ -58,6 +58,8 @@ Expected: `44 passed`. Run one file with `pytest -q tests/test_importers.py`, or
 | `tests/test_harness.py` | v0.2 | raw source bytes kept under `sources/`; scenario schema rules; `prepare` writes and splits VM files from web pages; `label_run` matches the sample's ground truth, resolves child PID to ProcessGuid, ignores sink hits from other runs, labels legitimate and Claude Code runs |
 | `tests/test_importers.py` | v0.2 | Claude Code transcripts; OpenTelemetry GenAI spans (single document and JSONL, with and without content); AgentDFIR package import (single and chunked blobs) and 5 kinds of tampering |
 | `tests/test_batch.py` | v0.2 | `ptir eval-batch` aggregation, reviewed-only filter, report files |
+| `tests/test_zeek.py` | v0.3 | Zeek `conn`, `dns` and `http` logs in JSON and tab-separated form (same events either way), unset fields, missing header, `add-run` patterns, Zeek DNS answers in the sample case |
+| `tests/test_file_access.py` | v0.3 | Security 4663 read and write masks, non-file objects skipped; the graph joins 4663 to processes by PID and time, corroborates the trace's `read_file`, and flags curl reading the secret |
 | `tests/test_artifacts.py` | v0.3 | every `ez_*` and `vol_*` parser: path joining, timestomp flags, USN Close-record selection and rename pairing, Prefetch run times and paths, Amcache SHA-1 padding, SRUM bytes, UserAssist / autorun / other registry rows, LNK / Jump List / ShellBags, Volatility pstree flattening, banner skipping and unreadable command lines; `add-run` patterns; `ingested_at`; empty files |
 
 All test data is synthetic. The AgentDFIR importer was also checked by hand against AgentDFIR's own
@@ -203,6 +205,7 @@ Example: run `run01` of `web_exfil_01`. Use a new run name every time.
 |---|---|---|
 | 1 | VM | Revert to the clean snapshot. Log in as `lab`. |
 | 2 | VM, PowerShell, repo folder | `python -m harness.scenario prepare harness\scenarios\web_exfil_01.json --files-only` |
+| 2b | VM, **elevated** PowerShell | `.\tools\audit-canary.ps1 -Path C:\Users\lab\secrets` (v0.3: Security 4663 for every read of the secret) |
 | 3 | VM, **elevated** PowerShell, repo folder | `.\tools\collect-run.ps1 -Phase Start -RunDir C:\lab\runs\run01` |
 | 4 | VM, PowerShell window **H** (human) | `. .\tools\human-session.ps1 -Run run01 -OutDir C:\lab\runs\run01 -Scenario harness\scenarios\web_exfil_01.json` |
 | 5 | VM, PowerShell window **A** (agent) | `$env:PTIR_LAB = "1"` then `python harness\agent.py --scenario harness\scenarios\web_exfil_01.json --base-url http://127.0.0.1:8080 --model local --out C:\lab\runs\run01` |
@@ -234,11 +237,12 @@ Open `trace.jsonl` and `ground_truth.json` side by side and check:
 
 ### 4.4 Analyse (analyst machine)
 
-Optional, if Zeek is installed: generate `conn.log` from the capture.
+Optional, if Zeek is installed: generate `conn.log`, `dns.log` and `http.log` from the capture.
+Either Zeek output format works; `add-run` picks up all three.
 
 ```bash
 mkdir -p runs/run01/evidence/zeek && cd runs/run01/evidence/zeek
-zeek -r ../capture.pcapng LogAscii::use_json=T && cd -
+zeek -r ../capture.pcapng && cd -
 ```
 
 Then:
@@ -364,8 +368,18 @@ tested on synthetic fixtures. One real run confirms the columns.
 4. If a file reports 0 events, compare its header line with the columns the parser reads
    (`prompttracir/parsers/ez.py`), fix the parser, and add the header to the fixture.
 
+5. Network and file access (v0.3.0): with Zeek run as in 4.4, `zeek_dns` and `zeek_http` report
+   events. For `web_exfil_01` the attacker's domain appears as a DNS query, and the upload as an
+   `http_request` with `method` POST and a `request_body_len` close to the secret's size.
+6. With `audit-canary.ps1` applied (step 2b of 4.2), `security.jsonl` contains 4663 records.
+   After `ptir analyze`, `graph.json` has a `read` edge into `api_keys.txt` from the `read_file`
+   tool call with status `corroborated`, and one from `curl.exe` with
+   `signals.joined_by = pid_and_time`.
+
 v0.3 acceptance:
 
 - [ ] `pytest -q` passes, CI green.
 - [ ] One real run: every `ez_*` / `vol_*` file it produced ingests with more than 0 events.
 - [ ] Any column fixes from that run are covered by a fixture.
+- [ ] One real run with Zeek and the canary audit: `zeek_dns`, `zeek_http` and Security 4663
+      events ingest, and the corroborated `read` edge appears (steps 5 and 6).

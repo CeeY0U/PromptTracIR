@@ -99,7 +99,9 @@ Goal: every evidence kind in the proposal's Table I produces canonical events.
 
 Done when: each new `--kind` parses a real lab file and has a fixture test; only raw PCAP remains "preserve only".
 
-Status (2026-11-12): parsers, fixtures and tests are in place for every EZ Tools item above plus the three Volatility plugins (`ez_*` and `vol_*` kinds), with schema v0.3 (`RawRef.ingested_at`, `attrs.ts_meaning`, new sources and actions) and `tools/parse-artifacts.ps1`. Raw artifacts keep their raw kinds, so "only raw PCAP remains preserve only" now reads as: every raw kind has a parsed derived kind except PCAP and the triage archive. Not done: Zeek `dns.log` / `http.log` or Suricata, Security 4663, and the "real lab file" half of the check, which needs one run through `parse-artifacts.ps1` on the VM (docs/TESTING.md, Part 8).
+Status (2026-11-12): parsers, fixtures and tests are in place for every EZ Tools item above plus the three Volatility plugins (`ez_*` and `vol_*` kinds), with schema v0.3 (`RawRef.ingested_at`, `attrs.ts_meaning`, new sources and actions) and `tools/parse-artifacts.ps1`. Raw artifacts keep their raw kinds, so "only raw PCAP remains preserve only" now reads as: every raw kind has a parsed derived kind except PCAP and the triage archive. Not done: the "real lab file" half of the check, which needs one run through `parse-artifacts.ps1` on the VM (docs/TESTING.md, Part 8).
+
+Status (2026-11-14, v0.3.0): Zeek `dns.log` and `http.log` parsers added (Suricata not needed); all Zeek parsers read JSON and tab-separated logs. Security 4663 file access is parsed and joined to processes; `tools/audit-canary.ps1` audits the canary folder. Released as v0.3.0; the real-run check remains.
 
 ### v0.4: Attribution engine (Phase 3, RQ1)
 

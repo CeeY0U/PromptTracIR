@@ -13,7 +13,7 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.2.0. The full pipeline runs end to end on synthetic evidence and on the formats
+> Status: v0.3.0. The full pipeline runs end to end on synthetic evidence and on the formats
 > listed below; lab tooling for real runs is in place. See [ROADMAP.md](ROADMAP.md),
 > [docs/TESTING.md](docs/TESTING.md) and [What is not built yet](#what-is-not-built-yet).
 
@@ -85,10 +85,12 @@ Both expect an OpenAI-compatible server, e.g. `llama-server -m model.gguf --port
 | `otel_trace` | OTLP/JSON spans using the OpenTelemetry GenAI conventions | same as `agent_trace`; PIDs if the instrumentation sets them |
 | `agent_requests` | `requests.jsonl` from the harness | preserved only; used for replay |
 | `sysmon` | `.evtx` or JSONL from `tools/export-events.ps1` | events 1, 3, 11, 13, 22, 23, 26 |
-| `security` | same | 4624 logons, 4688 process creation |
+| `security` | same | 4624 logons, 4663 file access on audited paths (`tools/audit-canary.ps1`), 4688 process creation |
 | `powershell` | same | 4104 script blocks |
 | `psreadline` | `ConsoleHost_history.txt` | interactive command history (no timestamps) |
-| `zeek_conn` | Zeek `conn.log` in JSON | connection byte counts |
+| `zeek_conn` | Zeek `conn.log` (JSON or tab-separated) | connection byte counts |
+| `zeek_dns` | Zeek `dns.log` | queries and answers (names IP-only connections) |
+| `zeek_http` | Zeek `http.log` | method, host, URI, request and response body sizes |
 | `ez_mft` | MFTECmd `$MFT` CSV | file created / modified ($SI times; $FN and timestomp flags in attrs) |
 | `ez_usn` | MFTECmd `$J` CSV (`-m $MFT` for paths) | file create / delete / rename / modify, one per closed change |
 | `ez_prefetch` | PECmd CSV | program run, one per recorded run time (weak for authorship) |
@@ -227,6 +229,7 @@ Mapped to the proposal so the team can split it up:
 | Local LLM classification + validated summary | done | needs prompt tuning on real runs |
 | Analyst UI | done (single page + Cytoscape) | proposal said React; either port or note the change |
 | MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3, synthetic fixtures) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; needs one real lab run to confirm columns |
+| Zeek DNS / HTTP, Security 4663 file reads | done (v0.3) | 4663 needs `tools/audit-canary.ps1` on the VM |
 | Volatility 3 cross-check of the transcript | parsers done (v0.3) | `vol_pslist`, `vol_cmdline`, `vol_netscan` ingest; the transcript cross-check itself is v0.5 |
 | AgentDFIR / OpenTelemetry trace adapters | done (v0.2) | Claude Code transcripts have no PIDs; signature check left to `agentdfir verify` |
 | PromptLocate / TracLLM / AttnTrace modules | optional | add as further localizers in `traceback.py` |
