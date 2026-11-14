@@ -11,10 +11,12 @@ PARSERS = {
     "claude_code": claude_code.parse,      # Claude Code session transcript (also via ptir import-adfir)
     "otel_trace": otel.parse,              # OTLP/JSON spans using the GenAI semantic conventions
     "sysmon": windows.parse,               # .evtx or JSONL export of Sysmon/Operational
-    "security": windows.parse,             # .evtx or JSONL export of Security (4624, 4688)
+    "security": windows.parse,             # .evtx or JSONL export of Security (4624, 4663, 4688)
     "powershell": windows.parse,           # .evtx or JSONL export of PowerShell/Operational (4104)
     "psreadline": psreadline.parse,        # ConsoleHost_history.txt
-    "zeek_conn": zeek.parse,               # Zeek conn.log in JSON format
+    "zeek_conn": zeek.parse_conn,          # Zeek conn.log (JSON or tab-separated)
+    "zeek_dns": zeek.parse_dns,            # Zeek dns.log (JSON or tab-separated)
+    "zeek_http": zeek.parse_http,          # Zeek http.log (JSON or tab-separated)
     # v0.3: CSV output of Eric Zimmerman's tools (raw artifacts stay under the raw kinds below)
     "ez_mft": ez.parse_mft,                # MFTECmd $MFT CSV
     "ez_usn": ez.parse_usn,                # MFTECmd $J CSV

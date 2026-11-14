@@ -53,6 +53,9 @@ class Action(str, Enum):
     CONSOLE_HISTORY = "console_history"
     # network
     CONN = "conn"
+    HTTP_REQUEST = "http_request"      # Zeek http.log (v0.3)
+    # Security 4663 object access on an audited file (v0.3). PID only, no ProcessGuid.
+    FILE_READ = "file_read"
     # v0.3 artifacts. These carry no ProcessGuid; attrs["ts_meaning"] says what the time is.
     FILE_MODIFY = "file_modify"
     FILE_RENAME = "file_rename"

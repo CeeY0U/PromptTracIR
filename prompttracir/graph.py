@@ -13,13 +13,17 @@ import networkx as nx
 
 from .correlate import ProcessIndex, Session, ToolLink, basename
 from .schema import (Action, Attribution, AttributionLabel, CanonicalEvent, Edge, EdgeStatus,
-                     Node, NodeKind)
+                     EventSource, Node, NodeKind)
 
 STATUS_RANK = {EdgeStatus.CONTRADICTED: 4, EdgeStatus.CORROBORATED: 3, EdgeStatus.OBSERVED: 2,
                EdgeStatus.INFERRED: 1, EdgeStatus.UNKNOWN: 0}
 HOST_EFFECTS = {Action.FILE_CREATE: ("file", "created"), Action.FILE_DELETE: ("file", "deleted"),
                 Action.REGISTRY_SET: ("registry", "set"), Action.NET_CONNECT: ("network", "connected"),
-                Action.DNS_QUERY: ("domain", "resolved")}
+                Action.DNS_QUERY: ("domain", "resolved"), Action.FILE_READ: ("file", "read"),
+                Action.FILE_MODIFY: ("file", "wrote")}
+# Host effects that carry a PID but no ProcessGuid (Security 4663). They are joined to a
+# process by PID and time; artifact events without a PID (USN, MFT) never become effects.
+PID_ONLY_SOURCES = {EventSource.SECURITY}
 _IP = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
 
 
@@ -217,8 +221,10 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
 
     # host effects of processes in the graph
     zeek = [e for e in events if e.action == Action.CONN]
+    effect_guid = _effect_guids(events, pidx)
     for e in events:
-        if e.action not in HOST_EFFECTS or not e.process_guid or e.process_guid not in in_graph or not e.object:
+        g = effect_guid.get(e.event_id)
+        if e.action not in HOST_EFFECTS or not g or g not in in_graph or not e.object:
             continue
         kind, rel = HOST_EFFECTS[e.action]
         oid = _effect_node(pg, e, kind)
@@ -230,11 +236,13 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
                 sig = {"zeek_uid": z.attrs.get("uid"), "orig_bytes": z.attrs["orig_bytes"],
                        "resp_bytes": z.attrs["resp_bytes"]}
                 pg.node(oid).attrs["orig_bytes"] = pg.node(oid).attrs.get("orig_bytes", 0) + z.attrs["orig_bytes"]
-        pg.add_edge(Edge(src=f"process:{e.process_guid}", dst=oid, relation=rel, status=status,
+        if e.process_guid is None:
+            sig = {**sig, "joined_by": "pid_and_time", "via": e.attrs.get("via")}
+        pg.add_edge(Edge(src=f"process:{g}", dst=oid, relation=rel, status=status,
                          signals=sig, evidence=[e.event_id] + ([z.event_id] if z else [])))
 
     # in-process effects of non-exec tool calls (e.g. http_get/write_file inside python.exe)
-    host_fx = [e for e in events if e.action in HOST_EFFECTS and e.process_guid]
+    host_fx = [e for e in events if e.action in HOST_EFFECTS and effect_guid.get(e.event_id)]
     for tcid, call in tool_calls.items():
         s = sessions.get(call.session_id or "")
         if not s or not s.runtime_guid:
@@ -243,7 +251,7 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
         lo, hi = call.ts() - 0.5, (res.ts() if res else call.ts() + 30) + 0.5
         claimed = _claimed_objects(res)
         for e in host_fx:
-            if e.process_guid != s.runtime_guid or not (lo <= e.ts() <= hi) or not e.object:
+            if effect_guid[e.event_id] != s.runtime_guid or not (lo <= e.ts() <= hi) or not e.object:
                 continue
             kind, rel = HOST_EFFECTS[e.action]
             oid = _effect_node(pg, e, kind)
@@ -266,6 +274,21 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
 
 
 # ---------------- helpers ----------------
+def _effect_guids(events: list[CanonicalEvent], pidx: ProcessIndex) -> dict[str, str]:
+    """event_id -> ProcessGuid of the acting process, for every host-effect event."""
+    out = {}
+    for e in events:
+        if e.action not in HOST_EFFECTS:
+            continue
+        if e.process_guid:
+            out[e.event_id] = e.process_guid
+        elif e.pid is not None and e.source in PID_ONLY_SOURCES:
+            g = pidx.find_by_pid(e.pid, before_ts=e.ts())
+            if g:
+                out[e.event_id] = g
+    return out
+
+
 def _short(args, n: int = 48) -> str:
     if isinstance(args, dict):
         v = args.get("command") or args.get("path") or args.get("url") or next(iter(args.values()), "")

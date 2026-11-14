@@ -43,7 +43,7 @@ function Export-Channel([string]$LogName, [int[]]$Ids, [string]$File) {
 }
 
 Export-Channel "Microsoft-Windows-Sysmon/Operational" $null "sysmon.jsonl"
-Export-Channel "Security" @(4624, 4688) "security.jsonl"
+Export-Channel "Security" @(4624, 4663, 4688) "security.jsonl"
 Export-Channel "Microsoft-Windows-PowerShell/Operational" @(4104) "powershell.jsonl"
 
 # Raw copies for chain of custody (python-evtx can also read these directly)

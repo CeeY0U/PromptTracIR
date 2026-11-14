@@ -2,12 +2,18 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-14
 
 Windows forensic normalizers (roadmap v0.3). Tested on synthetic fixtures that follow each tool's
 CSV / JSON layout; not yet checked against output from a real lab run.
 
 ### Added
+- Zeek `dns.log` (`zeek_dns`) and `http.log` (`zeek_http`) parsers. All Zeek parsers, `zeek_conn`
+  included, read both JSON and Zeek's default tab-separated format.
+- Security 4663 file access: `file_read` / `file_modify` events with PID, image, path and access
+  mask. The graph joins them to processes by PID and time; a 4663 read inside a `read_file` tool
+  call corroborates the trace. `tools/audit-canary.ps1` audits one folder; `export-events.ps1`
+  exports 4663.
 - EZ Tools CSV parsers (`prompttracir/parsers/ez.py`): `ez_mft`, `ez_usn`, `ez_prefetch`,
   `ez_amcache`, `ez_srum`, `ez_registry` (UserAssist, autoruns, other values), `ez_lnk`,
   `ez_jumplist`, `ez_shellbags`.
@@ -21,7 +27,8 @@ CSV / JSON layout; not yet checked against output from a real lab run.
   `folder_open`, `program_run`, `program_present`, `gui_launch`, `autorun`, `registry_value`,
   `net_usage`, `mem_process`, `mem_cmdline`, `mem_conn`; `ts_precision` value `h`;
   `RawRef.ingested_at`, set by `ptir ingest`; `attrs.ts_meaning` on every new event.
-- `tests/test_artifacts.py` and fixtures under `tests/fixtures/v03/`.
+- `tests/test_artifacts.py` and fixtures under `tests/fixtures/v03/`; `tests/test_zeek.py`,
+  `tests/test_file_access.py`.
 
 ### Fixed
 - `Case.store_events` inserts through `read_json` on a temporary NDJSON file in chunks of 50k
