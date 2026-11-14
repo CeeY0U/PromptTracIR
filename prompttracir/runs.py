@@ -38,6 +38,8 @@ DEFAULT_PATTERNS: list[tuple[str, str]] = [
     ("evidence/*.evtx", "evtx_raw"),
     ("evidence/consolehost_history.txt", "psreadline"),
     ("evidence/zeek/conn.log", "zeek_conn"),
+    ("evidence/zeek/dns.log", "zeek_dns"),
+    ("evidence/zeek/http.log", "zeek_http"),
     ("evidence/conn.log", "zeek_conn"),
     ("evidence/*.pcap", "pcap"),
     ("evidence/*.pcapng", "pcap"),
