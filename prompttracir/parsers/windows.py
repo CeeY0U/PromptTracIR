@@ -10,7 +10,7 @@ Accepts either:
 Mapped events:
   Sysmon 1 process create, 3 network connect, 11 file create, 13 registry set,
           22 DNS query, 23/26 file delete
-  Security 4624 logon, 4688 process create
+  Security 4624 logon, 4663 object access (file reads on audited paths), 4688 process create
   PowerShell 4104 script block
 """
 from __future__ import annotations
@@ -23,6 +23,10 @@ from typing import Iterator
 from ..schema import Action, CanonicalEvent, EventSource, RawRef
 
 PARSER = "windows_evtx"
+# 4663 AccessMask bits for files: 0x1 ReadData, 0x20 Execute. Write bits (0x2 WriteData,
+# 0x4 AppendData) become file_modify. Only paths with an audit SACL produce 4663 at all
+# (tools/audit-canary.ps1 sets one on the canary folder).
+READ_MASK = 0x1 | 0x20
 NS = "{http://schemas.microsoft.com/win/2004/08/events/event}"
 
 
@@ -76,7 +80,7 @@ def _channel_source(channel: str | None, eid: int) -> EventSource:
         return EventSource.SYSMON
     if "powershell" in ch or eid == 4104:
         return EventSource.POWERSHELL
-    if "security" in ch or eid in (4624, 4688):
+    if "security" in ch or eid in (4624, 4663, 4688):
         return EventSource.SECURITY
     return EventSource.SYSMON
 
@@ -137,6 +141,16 @@ def parse(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
                     action=Action.LOGON, **common, logon_id=d.get("TargetLogonId"),
                     user=f'{d.get("TargetDomainName")}\\{d.get("TargetUserName")}',
                     attrs={"logon_type": _int(d.get("LogonType")), "process": d.get("ProcessName")})
+            elif eid == 4663 and (d.get("ObjectType") or "File") == "File":
+                mask = _int(d.get("AccessMask")) or 0
+                yield CanonicalEvent(
+                    action=Action.FILE_READ if mask & READ_MASK else Action.FILE_MODIFY, **common,
+                    pid=_int(d.get("ProcessId")), image=d.get("ProcessName"), object=d.get("ObjectName"),
+                    logon_id=d.get("SubjectLogonId"),
+                    user=f'{d.get("SubjectDomainName")}\\{d.get("SubjectUserName")}',
+                    attrs={"access_mask": hex(mask), "accesses": (d.get("AccessList") or "").split(),
+                           "handle_id": d.get("HandleId"), "via": "4663",
+                           "ts_meaning": "handle access audited by the SACL on the object"})
             elif eid == 4688:
                 yield CanonicalEvent(
                     action=Action.PROCESS_CREATE, **common, pid=_int(d.get("NewProcessId")),

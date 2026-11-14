@@ -11,7 +11,7 @@ PARSERS = {
     "claude_code": claude_code.parse,      # Claude Code session transcript (also via ptir import-adfir)
     "otel_trace": otel.parse,              # OTLP/JSON spans using the GenAI semantic conventions
     "sysmon": windows.parse,               # .evtx or JSONL export of Sysmon/Operational
-    "security": windows.parse,             # .evtx or JSONL export of Security (4624, 4688)
+    "security": windows.parse,             # .evtx or JSONL export of Security (4624, 4663, 4688)
     "powershell": windows.parse,           # .evtx or JSONL export of PowerShell/Operational (4104)
     "psreadline": psreadline.parse,        # ConsoleHost_history.txt
     "zeek_conn": zeek.parse_conn,          # Zeek conn.log (JSON or tab-separated)
