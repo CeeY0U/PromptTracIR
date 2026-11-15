@@ -12,7 +12,8 @@
   ptir verify CASE
   ptir serve CASE [--port 8000]
   ptir eval CASE GROUND_TRUTH.json
-  ptir eval-batch ROOT [--out DIR] [--reviewed-only]
+  ptir eval-batch ROOT [--out DIR] [--reviewed-only] [--families F,...] [--exclude-families F,...]
+                       [--reanalyze] [--config FILE] [--without KIND ...] [--tag NAME]
 """
 from __future__ import annotations
 
@@ -85,6 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", help="write results.json and per_run.csv here (default: ROOT/results)")
     p.add_argument("--case-name", default="case")
     p.add_argument("--reviewed-only", action="store_true", help="skip runs whose labels were not reviewed")
+    p.add_argument("--families", help="only these scenario families (comma-separated), e.g. the training split")
+    p.add_argument("--exclude-families", help="skip these scenario families (comma-separated)")
+    p.add_argument("--reanalyze", action="store_true", help="analyze every run again before scoring")
+    p.add_argument("--config", help="attribution settings for --reanalyze")
+    p.add_argument("--without", action="append", metavar="KIND", default=[],
+                   help="ablation: leave this evidence kind out when re-analysing; repeat for several")
+    p.add_argument("--tag", help="output/TAG/ for the re-analysis (default: derived from --without)")
 
     a = ap.parse_args(argv)
 
@@ -201,8 +209,18 @@ def main(argv: list[str] | None = None) -> int:
         if not runs:
             print(f"no runs under {a.root} with ground_truth.json and {a.case_name}/case.json", file=sys.stderr)
             return 1
-        report = evaluate_runs(runs, a.case_name, a.reviewed_only)
-        j, c = write_report(report, a.out or Path(a.root) / "results")
+        from . import config as config_mod
+        split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None  # noqa: E731
+        try:
+            cfg = config_mod.load(a.config) if a.config else None
+            report = evaluate_runs(runs, a.case_name, a.reviewed_only, families=split(a.families),
+                                   exclude_families=split(a.exclude_families), reanalyze=a.reanalyze,
+                                   config=cfg, without=a.without, tag=a.tag)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        tag = report["condition"]["tag"]
+        j, c = write_report(report, a.out or Path(a.root) / "results" / (tag or ""))
         print("\n".join(summary_lines(report)))
         print(f"\nwrote {j} and {c}")
     return 0

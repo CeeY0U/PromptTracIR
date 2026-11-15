@@ -90,7 +90,7 @@ def test_orphan_root_ignores_children_outside_the_run_and_non_shell_parents():
 
 def _scored(gt, **outputs):
     r = evaluate_case(FakeCase(outputs=outputs), gt)
-    r.update(_gt=gt, _pred_first=None, _run="x")
+    r.update(_gt=gt, _pred_first=None, _run="x", _complete=False)
     return r
 
 

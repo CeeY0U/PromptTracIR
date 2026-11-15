@@ -18,6 +18,15 @@ Aggregation rules:
   * impact: per-destination accuracy over destinations whose label is not "unknown", plus
     the count of connection-only destinations labelled confirmed (target: zero).
 Runs whose ground truth is not marked "reviewed": true are flagged; --reviewed-only drops them.
+
+v0.4 additions:
+  * attribution calibration (ECE, Brier) of P(agent), and of tool-link scores;
+  * attribution on complete-evidence runs only (Sysmon plus an agent trace), the proposal's
+    target condition;
+  * --families / --exclude-families to score the training or test split only;
+  * --reanalyze, --config, --without, --tag: re-run `analyze` on every run with other settings
+    or with evidence kinds left out (ablations), into output/<tag>/, and score that. The
+    original output/ is not touched.
 """
 from __future__ import annotations
 
@@ -26,7 +35,14 @@ import json
 from pathlib import Path
 
 from .case import Case
-from .evaluate import evaluate_case, prf
+from .evaluate import calibration, evaluate_case, prf
+
+TRACE_KINDS = {"agent_trace", "claude_code", "otel_trace"}
+COMPLETE_EVIDENCE = {"sysmon"}      # plus one trace kind
+
+
+def is_complete(kinds: set[str]) -> bool:
+    return COMPLETE_EVIDENCE <= kinds and bool(kinds & TRACE_KINDS)
 
 
 def find_runs(root: str | Path, case_name: str = "case") -> list[Path]:
@@ -53,11 +69,20 @@ def _attribution(results: list[dict]) -> dict:
     classes = sorted({g for g in (row["gold"] for row in rows)})
     per_class = {c: prf({i for i, row in enumerate(rows) if row["pred"] == c},
                         {i for i, row in enumerate(rows) if row["gold"] == c}) for c in classes}
+    probs = [(row["p_agent"], row["gold"] == "agent") for row in rows
+             if row.get("p_agent") is not None and row["gold"] in ("agent", "human")]
     return {"rows": len(rows),
             "accuracy": round(sum(row["gold"] == row["pred"] for row in rows) / len(rows), 3),
             "macro_f1": round(sum(v["f1"] for v in per_class.values()) / len(per_class), 3),
             "abstention_rate": round(sum(row["pred"] == "unknown" for row in rows) / len(rows), 3),
-            "per_class_f1": {c: v["f1"] for c, v in per_class.items()}}
+            "per_class_f1": {c: v["f1"] for c, v in per_class.items()},
+            "calibration": calibration(probs)}
+
+
+def _link_calibration(results: list[dict]) -> dict:
+    pairs = [(s["score"], s["correct"]) for r in results
+             for s in (r.get("tool_process_links") or {}).get("scored", [])]
+    return calibration(pairs)
 
 
 def aggregate(results: list[dict]) -> dict:
@@ -79,31 +104,71 @@ def aggregate(results: list[dict]) -> dict:
         if attack else None,
         "legitimate_false_alarm_rate": round(sum(bool(r["_pred_first"]) for r in legit) / len(legit), 3)
         if legit else None,
+        "tool_link_calibration": _link_calibration(results),
         "attribution": _attribution(results),
+        "complete_evidence_runs": sum(r["_complete"] for r in results),
+        "attribution_complete_evidence": _attribution([r for r in results if r["_complete"]]),
         "impact_accuracy": round(sum(v["gold"] == v["pred"] for v in impacts) / len(impacts), 3) if impacts else None,
         "connection_only_labelled_confirmed": sum(r["connection_only_labelled_confirmed"] for r in results),
     }
 
 
-def evaluate_runs(runs: list[Path], case_name: str = "case", reviewed_only: bool = False) -> dict:
+def condition_tag(without: list[str] | None, tag: str | None) -> str | None:
+    if tag:
+        return tag
+    if without:
+        return "without-" + "-".join(sorted(without)).replace("_", "")
+    return None
+
+
+def evaluate_runs(runs: list[Path], case_name: str = "case", reviewed_only: bool = False,
+                  families: list[str] | None = None, exclude_families: list[str] | None = None,
+                  reanalyze: bool = False, config: dict | None = None, without: list[str] | None = None,
+                  tag: str | None = None) -> dict:
+    """Score runs. With reanalyze (implied by config, without or tag), each case is analysed
+    again into output/<tag>/ first, and that analysis is scored."""
+    reanalyze = reanalyze or config is not None or bool(without) or bool(tag)
+    tag = condition_tag(without, tag) or ("reanalyzed" if reanalyze else None)
     results, skipped = [], []
     for run in runs:
         gt = json.loads((run / "ground_truth.json").read_text(encoding="utf-8-sig"))
         if reviewed_only and not gt.get("reviewed"):
             skipped.append({"run": run.name, "reason": "ground truth not reviewed"})
             continue
-        case = Case(run / case_name)
+        fam = gt.get("family") or "unknown"
+        if (families and fam not in families) or (exclude_families and fam in exclude_families):
+            skipped.append({"run": run.name, "reason": f"family '{fam}' not selected"})
+            continue
+        base = Case(run / case_name)
+        if reanalyze:
+            from .pipeline import analyze
+            ev = (base.meta.get("evidence") or {}).values()
+            if not any(i.get("ingested") for i in ev):
+                skipped.append({"run": run.name, "reason": "case not ingested (run ptir ingest)"})
+                continue
+            try:
+                analyze(base, config=config, without=without, tag=tag)
+            except ValueError as e:          # e.g. an unknown kind in --without: report, do not hide
+                raise ValueError(f"{run.name}: {e}") from e
+        case = base.view(tag) if tag else base
         chain = case.read_output("chain.json")
         if chain is None:
             skipped.append({"run": run.name, "reason": "case not analysed (run ptir ingest and ptir analyze)"})
             continue
+        used = case.read_output("config.json") or {}
+        kinds = set(used.get("evidence_kinds") or {i["kind"] for i in base.meta["evidence"].values()})
         r = evaluate_case(case, gt)
-        r.update(_run=run.name, _gt=gt, _pred_first=chain.get("first_deviation"))
+        r.update(_run=run.name, _gt=gt, _pred_first=chain.get("first_deviation"),
+                 _kinds=sorted(kinds), _complete=is_complete(kinds), _config=used.get("fingerprint"))
         results.append(r)
     groups: dict[str, list[dict]] = {}
     for r in results:
         groups.setdefault(r["_gt"].get("family") or "unknown", []).append(r)
-    return {"overall": aggregate(results) if results else {"runs": 0},
+    fps = sorted({r["_config"] for r in results if r["_config"]})
+    return {"condition": {"tag": tag, "without": sorted(without or []), "reanalyzed": reanalyze,
+                          "config_fingerprints": fps, "families": families or [],
+                          "exclude_families": exclude_families or []},
+            "overall": aggregate(results) if results else {"runs": 0},
             "by_family": {k: aggregate(v) for k, v in sorted(groups.items())},
             "skipped": skipped, "per_run": results}
 
@@ -122,6 +187,9 @@ def per_run_rows(report: dict) -> list[dict]:
             "predicted_first_deviation": r["_pred_first"], "gold_first_deviation": gt.get("first_deviation"),
             "attribution_accuracy": r["attribution"]["accuracy"],
             "abstention_rate": r["attribution"]["abstention_rate"],
+            "attribution_ece": r["attribution"]["calibration"]["ece"],
+            "complete_evidence": r["_complete"], "evidence_kinds": " ".join(r["_kinds"]),
+            "config": r["_config"],
             "impact": "; ".join(f"{d}:{v['gold']}->{v['pred']}" for d, v in r["impact"].items()),
         })
     return rows
@@ -148,7 +216,13 @@ def summary_lines(report: dict) -> list[str]:
     if not o.get("runs"):
         return ["no analysed runs found"]
     a = o["attribution"]
-    lines = [
+    ac = o["attribution_complete_evidence"]
+    cond = report.get("condition") or {}
+    head = []
+    if cond.get("tag"):
+        head.append(f"condition: {cond['tag']}" + (f" (without {', '.join(cond['without'])})" if cond.get("without")
+                                                   else "") + f", config {', '.join(cond['config_fingerprints'])}")
+    lines = head + [
         f"runs {o['runs']} (attack {o['attack_runs']}, legitimate {o['legitimate_runs']}, "
         f"successful attacks {o['successful_attacks']}, injection ignored {o.get('ignored_injection_runs', 0)}, "
         f"unreviewed {o['unreviewed_runs']})",
@@ -159,7 +233,11 @@ def summary_lines(report: dict) -> list[str]:
         f"   (recall {o['tool_process_links']['recall']}, target precision >= 0.95)",
         f"first deviation accuracy           {o['first_deviation_accuracy']}",
         f"legitimate-run false alarms        {o['legitimate_false_alarm_rate']}",
-        f"attribution macro-F1               {a.get('macro_f1')}   (abstention {a.get('abstention_rate')}, target >= 0.85)",
+        f"attribution macro-F1               {a.get('macro_f1')}   (abstention {a.get('abstention_rate')})",
+        f"  on complete-evidence runs        {ac.get('macro_f1')}   ({o['complete_evidence_runs']} runs, target >= 0.85)",
+        f"attribution calibration            ECE {(a.get('calibration') or {}).get('ece')}, "
+        f"Brier {(a.get('calibration') or {}).get('brier')}",
+        f"tool-link score calibration        ECE {o['tool_link_calibration']['ece']}",
         f"impact accuracy                    {o['impact_accuracy']}",
         f"connection-only labelled confirmed {o['connection_only_labelled_confirmed']}   (target 0)",
     ]

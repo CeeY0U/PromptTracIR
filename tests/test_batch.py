@@ -112,3 +112,54 @@ def test_eval_batch_cli_writes_report(tmp_path, capsys):
     res = json.loads((root / "results" / "results.json").read_text())
     assert res["overall"]["runs"] == 2 and len(res["per_run"]) == 2
     assert main(["eval-batch", str(tmp_path / "nothing")]) == 1
+
+
+# ---------------- v0.4: families, ablations, calibration ----------------
+def test_eval_batch_families_filter(tmp_path):
+    root = _build(tmp_path)
+    rep = evaluate_runs(find_runs(root), families=["legitimate"])
+    assert rep["overall"]["runs"] == 1 and rep["overall"]["legitimate_runs"] == 1
+    rep = evaluate_runs(find_runs(root), exclude_families=["legitimate"])
+    assert rep["overall"]["runs"] == 1 and rep["overall"]["attack_runs"] == 1
+    assert any(s["reason"] == "family 'legitimate' not selected" for s in rep["skipped"])
+
+
+def test_eval_batch_reports_calibration_and_complete_evidence(tmp_path):
+    rep = evaluate_runs(find_runs(_build(tmp_path)))
+    o = rep["overall"]
+    assert o["complete_evidence_runs"] == 1                       # run02 has no Sysmon
+    assert o["attribution_complete_evidence"]["macro_f1"] == 1.0
+    assert o["attribution"]["calibration"]["n"] == 3 and 0 <= o["attribution"]["calibration"]["ece"] < 0.2
+    assert o["tool_link_calibration"]["n"] == 1
+    cond = rep["condition"]
+    assert cond["tag"] is None and cond["reanalyzed"] is False and cond["without"] == []
+    assert len(cond["config_fingerprints"]) == 1                 # both runs analysed with the defaults
+
+
+def test_eval_batch_ablation_reanalyses_into_a_tag(tmp_path, capsys):
+    root = _build(tmp_path)
+    assert main(["eval-batch", str(root), "--without", "sysmon"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("condition: without-sysmon (without sysmon)")
+    res = json.loads((root / "results" / "without-sysmon" / "results.json").read_text())
+    assert res["condition"]["without"] == ["sysmon"] and res["condition"]["reanalyzed"]
+    o = res["overall"]
+    assert o["complete_evidence_runs"] == 0
+    assert o["first_deviation_accuracy"] == 1.0                   # the trace alone still finds it
+    assert o["tool_process_links"]["recall"] == 0.0               # no process evidence, no links
+    # the original analysis and report are untouched
+    assert (root / "run01" / "case" / "output" / "without-sysmon" / "chain.json").exists()
+    assert json.loads((root / "run01" / "case" / "output" / "config.json").read_text())["without"] == []
+    assert not (root / "results" / "results.json").exists()
+
+
+def test_eval_batch_config_tuning_loop(tmp_path):
+    root = _build(tmp_path)
+    cfg = tmp_path / "strict.json"
+    cfg.write_text(json.dumps({"decision_margin": 10.0}))      # nothing can reach a label
+    assert main(["eval-batch", str(root), "--config", str(cfg), "--tag", "strict"]) == 0
+    res = json.loads((root / "results" / "strict" / "results.json").read_text())
+    assert res["overall"]["attribution"]["abstention_rate"] == 1.0
+    assert len(res["condition"]["config_fingerprints"]) == 1
+    cfg.write_text(json.dumps({"weights": {"bogus": 1}}))
+    assert main(["eval-batch", str(root), "--config", str(cfg)]) == 2
