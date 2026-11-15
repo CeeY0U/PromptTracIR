@@ -22,6 +22,16 @@ from pathlib import Path
 from .case import Case
 
 
+CASE_COMMANDS = {"add", "import-adfir", "ingest", "analyze", "verify", "serve", "eval"}
+
+
+def _msys_hint(path: str) -> str:
+    """Git Bash turns an argument like /envelope.json into C:/Program Files/Git/envelope.json."""
+    if "Program Files/Git" in path.replace("\\", "/") or path.startswith("/"):
+        return " (in Git Bash, write a relative path such as ./envelope.json, not /envelope.json)"
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ptir", description="PromptTracIR incident reconstruction")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -70,9 +80,23 @@ def main(argv: list[str] | None = None) -> int:
 
     a = ap.parse_args(argv)
 
+    if a.cmd in CASE_COMMANDS and not (Path(a.case) / "case.json").exists():
+        print(f"no case at {a.case} (case.json not found). Create one with `ptir init {a.case} --name NAME` "
+              f"or `ptir add-run RUN_DIR`.", file=sys.stderr)
+        return 2
+
     if a.cmd == "init":
-        env = json.loads(Path(a.envelope).read_text()) if a.envelope else None
-        Case.create(a.case, a.name, env)
+        env = None
+        if a.envelope:
+            if not Path(a.envelope).is_file():
+                print(f"envelope file not found: {a.envelope}" + _msys_hint(a.envelope), file=sys.stderr)
+                return 2
+            env = json.loads(Path(a.envelope).read_text(encoding="utf-8-sig"))
+        try:
+            Case.create(a.case, a.name, env)
+        except FileExistsError as e:
+            print(e, file=sys.stderr)
+            return 2
         print(f"case created at {a.case}")
     elif a.cmd == "add":
         from .parsers import KNOWN_KINDS
@@ -92,10 +116,13 @@ def main(argv: list[str] | None = None) -> int:
             for f, k in plan(a.run_dir):
                 print(f"{k:15} {f}")
             return 0
+        before = set(Case(case_dir).meta["evidence"]) if (Path(case_dir) / "case.json").exists() else set()
         _, added = add_run(case_dir, a.run_dir, a.scenario, a.name)
-        for f, k, d in added:
+        new = [(f, k, d) for f, k, d in added if d not in before]
+        for f, k, d in new:
             print(f"{k:15} {d[:12]}  {Path(f).relative_to(a.run_dir).as_posix()}")
-        print(f"{len(added)} files added to {case_dir}")
+        print(f"{len(new)} new file{'' if len(new) == 1 else 's'} added to {case_dir}"
+              + (f" ({len(added) - len(new)} already in the case, skipped)" if len(added) > len(new) else ""))
     elif a.cmd == "import-adfir":
         from .adfir import PackageError, import_package
         try:
@@ -143,7 +170,11 @@ def main(argv: list[str] | None = None) -> int:
         uvicorn.run(create_app(Case(a.case)), host=a.host, port=a.port)
     elif a.cmd == "eval":
         from .evaluate import evaluate_case
-        print(json.dumps(evaluate_case(Case(a.case), json.loads(Path(a.ground_truth).read_text())), indent=2))
+        if not Path(a.ground_truth).is_file():
+            print(f"ground truth not found: {a.ground_truth}" + _msys_hint(a.ground_truth), file=sys.stderr)
+            return 2
+        gt = json.loads(Path(a.ground_truth).read_text(encoding="utf-8-sig"))
+        print(json.dumps(evaluate_case(Case(a.case), gt), indent=2))
     elif a.cmd == "eval-batch":
         from .batch import evaluate_runs, find_runs, summary_lines, write_report
         runs = find_runs(a.root, a.case_name)

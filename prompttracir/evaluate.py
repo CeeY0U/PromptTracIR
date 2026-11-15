@@ -27,7 +27,14 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dic
 
     pred_frags = {e["src"] for e in graph["edges"]
                   if e["relation"] == "influenced" and e["confidence"] >= influence_threshold}
-    out["injected_fragment_localization"] = prf(pred_frags, set(gt.get("injected_fragments", [])))
+    if gt.get("injected_fragments") and gt.get("injection_followed") is False:
+        # the model ignored the payload: nothing deviated, so there is nothing to trace back
+        # from, and a 0 here would measure the model rather than PromptTracIR
+        out["injected_fragment_localization"] = {
+            "scored": False, "reason": "injection present but not followed", "f1": None,
+            "pred": len(pred_frags), "gold": len(gt["injected_fragments"])}
+    else:
+        out["injected_fragment_localization"] = prf(pred_frags, set(gt.get("injected_fragments", [])))
     out["first_deviation_correct"] = chain.get("first_deviation") == gt.get("first_deviation")
 
     pred_mal = {f["attrs"]["tool_call"] for f in findings if f["attrs"].get("tool_call")}
@@ -52,7 +59,8 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dic
         gold_links = {(tc, g) for tc, g in gt["tool_process_links"].items()}
         out["tool_process_links"] = prf(pred_links, gold_links)
     pred_imp = {i["destination"]: i["level"] for i in impact}
-    out["impact"] = {d: {"gold": lvl, "pred": pred_imp.get(d, "missing")}
+    # "unknown" means the labeller had no sink evidence either way: shown, but not scored
+    out["impact"] = {d: {"gold": lvl, "pred": pred_imp.get(d, "missing"), "scored": lvl != "unknown"}
                      for d, lvl in gt.get("exfiltration", {}).items()}
     out["connection_only_labelled_confirmed"] = sum(
         1 for d, lvl in gt.get("exfiltration", {}).items()
@@ -60,18 +68,55 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dic
     return out
 
 
+SHELL_IMAGES = {"powershell.exe", "pwsh.exe", "cmd.exe", "windowsterminal.exe", "openconsole.exe"}
+ORPHAN_MARGIN_S = 600.0
+
+
 def _labels_from_pids(case: Case, gt: dict) -> dict[str, str]:
-    """Expand harness-recorded root PIDs into per-process gold labels via the Sysmon tree."""
+    """Expand harness-recorded root PIDs into per-process gold labels via the Sysmon tree.
+
+    A root that started before the evidence window (typically the human's shell) has no
+    process-creation record of its own. Its children still name it: Sysmon records the
+    parent's PID and its ProcessGuid, which is unique, so PID reuse cannot mix two shells up."""
     roots = [(pid, "agent") for pid in gt.get("agent_runtime_pids", [])] + \
             [(pid, "human") for pid in gt.get("human_shell_pids", [])]
     if not roots:
         return {}
     from .correlate import ProcessIndex
     pidx = ProcessIndex.build(case.load_events())
+    window = _run_window(gt)
     out = {}
     for pid, label in roots:
         root = pidx.find_by_pid(pid)
-        if root:
-            for g in pidx.descendants(root):
+        for r in ([root] if root else _orphan_roots(pidx, pid, label, window)):
+            for g in pidx.descendants(r):
                 out[g] = label
     return out
+
+
+def _run_window(gt: dict) -> tuple[float, float] | None:
+    from datetime import datetime
+    w = gt.get("run_window") or {}
+    try:
+        lo = datetime.fromisoformat(w["start"].replace("Z", "+00:00")).timestamp()
+        hi = datetime.fromisoformat(w["end"].replace("Z", "+00:00")).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+    return lo - ORPHAN_MARGIN_S, hi + ORPHAN_MARGIN_S
+
+
+def _orphan_roots(pidx, pid: int, label: str, window: tuple[float, float] | None) -> list[str]:
+    """ProcessGuid of a root seen only as its children's parent; [] when absent or ambiguous."""
+    from .correlate import basename
+    found: set[str] = set()
+    for g, e in pidx.by_guid.items():
+        parent = e.parent_process_guid
+        if e.parent_pid != pid or not parent or parent in pidx.by_guid:
+            continue
+        if window and not window[0] <= e.ts() <= window[1]:
+            continue
+        parent_image = basename(e.attrs.get("parent_image"))
+        if label == "human" and parent_image and parent_image not in SHELL_IMAGES:
+            continue
+        found.add(parent)
+    return sorted(found) if len(found) == 1 else []
