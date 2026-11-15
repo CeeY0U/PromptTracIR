@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+from . import config as config_mod
 from .case import Case
 from .correlate import ProcessIndex, attribute_processes, find_sessions, link_tool_calls
 from .graph import ProvGraph, build_graph
@@ -54,12 +55,33 @@ def load_requests(case: Case) -> dict[str, dict]:
     return out
 
 
-def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int = 3) -> dict:
-    events = case.load_events()
-    pidx = ProcessIndex.build(events)
-    sessions = find_sessions(events, pidx)
-    links = link_tool_calls(events, pidx, sessions)
-    attributions = attribute_processes(events, pidx, sessions, links)
+def excluded_evidence(case: Case, without: list[str] | None) -> set[str]:
+    """Evidence ids of the kinds left out of an ablation run."""
+    if not without:
+        return set()
+    from .parsers import KNOWN_KINDS
+    unknown = sorted(set(without) - KNOWN_KINDS)
+    if unknown:
+        raise ValueError(f"unknown evidence kind(s) for --without: {', '.join(unknown)} (see `ptir kinds`)")
+    return {d for d, info in case.meta["evidence"].items() if info["kind"] in set(without)}
+
+
+def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int = 3,
+            config: dict | None = None, without: list[str] | None = None, tag: str | None = None) -> dict:
+    """Correlate and analyse a case.
+
+    config   settings from prompttracir.config (default: the built-in defaults)
+    without  evidence kinds to leave out (ablation); their events are ignored, not deleted
+    tag      write outputs to output/<tag>/ instead of output/ (keeps the full analysis intact)
+    """
+    cfg = config if config is not None else config_mod.load()
+    drop = excluded_evidence(case, without)
+    out = case.view(tag) if tag else case
+    events = [e for e in case.load_events() if e.raw.evidence_id not in drop]
+    pidx = ProcessIndex.build(events, cfg)
+    sessions = find_sessions(events, pidx, cfg)
+    links = link_tool_calls(events, pidx, sessions, cfg)
+    attributions = attribute_processes(events, pidx, sessions, links, cfg)
     pg = build_graph(events, pidx, sessions, links, attributions)
 
     envelope = case.meta.get("envelope", {})
@@ -81,18 +103,29 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
         from .llm import summarize
         summary = summarize(pg, set(chain["nodes"]), llm)
 
-    case.write_output("graph.json", pg.to_json())
-    case.write_output("attribution.json", [a.model_dump(mode="json") for a in attributions])
-    case.write_output("tool_links.json", [l.__dict__ | {"status": l.status.value} for l in links])
-    case.write_output("findings.json", [f.model_dump(mode="json") for f in findings])
-    case.write_output("traceback.json", tb_log)
-    case.write_output("impact.json", impact)
-    case.write_output("llm.json", {"classifications": llm_out, "summary": summary})
-    case.write_output("chain.json", chain)
-    case._custody("analyzed", {"findings": len(findings), "first_deviation": first})
+    fp = config_mod.fingerprint(cfg)
+    kinds = sorted({case.meta["evidence"][d]["kind"] for d in case.meta["evidence"]} -
+                   {case.meta["evidence"][d]["kind"] for d in drop})
+    out.write_output("config.json", {"fingerprint": fp, "without": sorted(without or []), "tag": tag,
+                                     "evidence_kinds": kinds, "settings": cfg})
+    out.write_output("correlation.json", {"sessions": [s.summary() for s in sessions.values()]})
+    out.write_output("graph.json", pg.to_json())
+    out.write_output("attribution.json", [a.model_dump(mode="json") for a in attributions])
+    out.write_output("tool_links.json", [l.__dict__ | {"status": l.status.value} for l in links])
+    out.write_output("findings.json", [f.model_dump(mode="json") for f in findings])
+    out.write_output("traceback.json", tb_log)
+    out.write_output("impact.json", impact)
+    out.write_output("llm.json", {"classifications": llm_out, "summary": summary})
+    out.write_output("chain.json", chain)
+    case._custody("analyzed", {"findings": len(findings), "first_deviation": first, "config": fp,
+                               "without": sorted(without or []), "tag": tag})
+    labels = {}
+    for a in attributions:
+        labels[a.label.value] = labels.get(a.label.value, 0) + 1
     return {"events": len(events), "processes": len(pidx.by_guid), "tool_links": len(links),
             "findings": len(findings), "first_deviation": first, "entry_points": chain["entry_points"],
-            "impact": [(i["destination"], i["level"]) for i in impact]}
+            "impact": [(i["destination"], i["level"]) for i in impact],
+            "attribution": labels, "config": fp, "without": sorted(without or []), "tag": tag}
 
 
 def attack_chain(pg: ProvGraph, first: str | None, findings) -> dict:

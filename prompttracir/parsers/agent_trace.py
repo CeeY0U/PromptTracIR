@@ -2,7 +2,7 @@
 
 Record types (all carry "type", "ts" ISO-8601 UTC, "session_id"):
 
-  session_start     {"agent", "model", "pid", "process_guid"?, "image"?, "host"?, "user"?, "scenario_id"?}
+  session_start     {"agent", "model", "pid", "process_guid"?, "image"?, "host"?, "user"?, "scenario_id"?, "cwd"?}
   user_prompt       {"span_id", "text"}
   context_fragment  {"fragment_id", "tool_call_id"?, "text", "index",
                      "source": {"kind", "uri", "sha256", "acquired"?, "text_sha256"?,
@@ -73,7 +73,7 @@ def events_from_records(records: Iterable[tuple[str, str, dict]], evidence_id: s
                 process_guid=_g(r.get("process_guid")), host=r.get("host"), user=r.get("user"),
                 image=r.get("image"),
                 attrs={"agent": r.get("agent"), "model": r.get("model"),
-                       "scenario_id": r.get("scenario_id")}, **base)
+                       "scenario_id": r.get("scenario_id"), "cwd": r.get("cwd")}, **base)
         elif t == "user_prompt":
             yield CanonicalEvent(
                 event_id=eid, action=Action.USER_PROMPT,

@@ -6,7 +6,9 @@
   ptir kinds
   ptir import-adfir CASE PACKAGE_DIR [--force]
   ptir ingest CASE
-  ptir analyze CASE [--replay-url URL --replay-model M] [--llm-url URL --llm-model M]
+  ptir analyze CASE [--config FILE] [--without KIND ...] [--tag NAME]
+                    [--replay-url URL --replay-model M] [--llm-url URL --llm-model M]
+  ptir config                                    (print the default attribution settings)
   ptir verify CASE
   ptir serve CASE [--port 8000]
   ptir eval CASE GROUND_TRUTH.json
@@ -62,6 +64,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("case")
     p.add_argument("--replay-url"); p.add_argument("--replay-model"); p.add_argument("--samples", type=int, default=3)
     p.add_argument("--llm-url"); p.add_argument("--llm-model")
+    p.add_argument("--config", help="attribution settings JSON (only the keys you change; see `ptir config`)")
+    p.add_argument("--without", action="append", metavar="KIND", default=[],
+                   help="leave this evidence kind out (ablation); repeat for several")
+    p.add_argument("--tag", help="write outputs to output/TAG/ instead of output/")
+
+    sub.add_parser("config", help="print the default attribution settings as JSON")
 
     p = sub.add_parser("verify", help="re-hash preserved evidence")
     p.add_argument("case")
@@ -158,7 +166,19 @@ def main(argv: list[str] | None = None) -> int:
         if a.llm_url:
             from .llm import LocalLLM
             llm = LocalLLM(a.llm_url, a.llm_model or "local")
-        print(json.dumps(analyze(Case(a.case), replayer, llm, a.samples), indent=2))
+        from . import config as config_mod
+        try:
+            cfg = config_mod.load(a.config)
+            res = analyze(Case(a.case), replayer, llm, a.samples, config=cfg, without=a.without,
+                          tag=a.tag or (None if not a.without else
+                                        "without-" + "-".join(sorted(a.without)).replace("_", "")))
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        print(json.dumps(res, indent=2))
+    elif a.cmd == "config":
+        from . import config as config_mod
+        print(json.dumps(config_mod.DEFAULTS, indent=2))
     elif a.cmd == "verify":
         res = Case(a.case).verify_evidence()
         for d, ok in res.items():

@@ -173,6 +173,11 @@ class Attribution(BaseModel):
     human_score: float
     signals: list[str]
     tool_call_id: str | None = None
+    # v0.4: calibrated P(agent) from the score difference, the weighted signals behind the
+    # scores, and which logs recorded the process (sysmon, security_4688)
+    agent_probability: float | None = None
+    contributions: list[dict[str, Any]] = Field(default_factory=list)
+    seen_by: list[str] = Field(default_factory=list)
 
 
 class ImpactLevel(str, Enum):
