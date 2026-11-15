@@ -203,8 +203,17 @@ class Case:
             out.append(CanonicalEvent(**{k: v for k, v in d.items() if v is not None or k in ("attrs", "raw")}))
         return out
 
+    def view(self, tag: str) -> "Case":
+        """The same case with outputs in output/<tag>/ (ablations, tuning runs)."""
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag or ""):
+            raise ValueError(f"invalid output tag '{tag}': use letters, digits, '.', '_' or '-'")
+        c = Case(self.root)
+        c.output_dir = self.output_dir / tag
+        return c
+
     def write_output(self, name: str, data) -> Path:
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         p = self.output_dir / name
         p.write_text(json.dumps(data, indent=2, default=str))
         return p

@@ -1,0 +1,49 @@
+{
+  "weights": {
+    "linked_tool_call": 3.0,
+    "descendant_of_linked": 2.5,
+    "descendant_of_runtime": 2.0,
+    "noninteractive_flags": 0.5,
+    "interactive_root": 2.0,
+    "psreadline_match": 1.0,
+    "userassist_launch": 2.0,
+    "shell_file_open": 1.5,
+    "shellbag_folder": 0.5,
+    "outside_agent_session": 1.0
+  },
+  "decision_margin": 1.5,
+  "calibration_temperature": 1.5,
+  "link": {
+    "min_score": 0.5,
+    "window_before_s": 1.0,
+    "window_after_s": 1.0,
+    "estimate_clock_offset": true,
+    "max_clock_offset_s": 120.0,
+    "assumed_clock_offset_s": 0.0,
+    "script_block_similarity": 0.8
+  },
+  "human": {
+    "userassist_window_s": 5.0,
+    "shell_open_window_s": 120.0,
+    "shellbag_window_s": 600.0,
+    "session_margin_s": 5.0,
+    "interactive_logon_types": [
+      2,
+      7,
+      10,
+      11
+    ]
+  },
+  "process": {
+    "dedupe_window_s": 2.0
+  },
+  "runtime_identification": {
+    "images": [
+      "claude.exe",
+      "node.exe",
+      "bun.exe"
+    ],
+    "max_age_s": 86400.0,
+    "min_score": 1.0
+  }
+}

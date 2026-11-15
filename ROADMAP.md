@@ -120,6 +120,8 @@ Goal: defensible agent / human / mixed / unknown labels with numbers.
 
 Done when, on the training split collected so far: tool-to-process precision is at least 0.95 where ProcessGuid or child PID exists, and attribution macro-F1 is at least 0.85 on complete-evidence runs.
 
+Status (2026-11-16, v0.4.0): rebuilt on top of v0.3.1 and the first lab runs. Every item above is built and tested on synthetic cases, and the 4688/Sysmon merge on lab run01's records: settings file and `ptir config`; clock offset from child PIDs and configurable drift windows; 4688 process tree and 4104 link evidence; UserAssist, LNK / Jump List, ShellBags, outside-session and logon-type signals; runtime inference for Claude Code; `--without` ablations; calibration (ECE, Brier), complete-evidence subset and family filters in `eval-batch`. SRUM stays an impact signal for v0.5 (it is per application per hour, too coarse to attribute a single process). Not done: tuning on real training runs and the two numeric targets, which need the dataset (docs/TESTING.md, Part 9).
+
 ### v0.5: Causal reconstruction (Phase 4, RQ2 and RQ3)
 
 Goal: source fragment to tool call to host effect, with cross-checked evidence.
@@ -221,8 +223,8 @@ Rules:
 
    | Version | Target date | Scope for the deadline |
    |---|---|---|
-   | v0.3.1 | 16 Nov | fixes from the first lab runs, scripted model (this release) |
-   | v0.4.0 | 18 Nov | attribution engine; rerun the lab (real model with temperature and seeds, plus scripted runs) |
+   | v0.3.1 | 16 Nov | fixes from the first lab runs, scripted model |
+   | v0.4.0 | 16 Nov (code), 18 Nov (lab rerun) | attribution engine; rerun the lab (real model with temperature and seeds, plus scripted runs) and record the first attribution numbers |
    | v0.5 | 21 Nov | localizer interface, memory cross-check, chain metrics |
    | v0.6 | 23 Nov | local-model classification and grounded summary on real runs |
    | v0.7 | 25 Nov | STIX 2.1 export; keep the single-page UI (record the React change) |

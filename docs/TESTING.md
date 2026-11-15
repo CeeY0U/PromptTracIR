@@ -1,6 +1,6 @@
-# Testing guide: v0.1.1 to v0.3.1
+# Testing guide: v0.1.1 to v0.4.0
 
-This guide covers every check up to v0.3.1, in the order to run them:
+This guide covers every check up to v0.4.0, in the order to run them:
 
 | Part | Where | Needs | Time |
 |---|---|---|---|
@@ -11,6 +11,8 @@ This guide covers every check up to v0.3.1, in the order to run them:
 | [5. Claude Code through AgentDFIR](#part-5-claude-code-through-agentdfir) | lab VM | Claude Code, AgentDFIR | 30 min |
 | [6. Scoring many runs](#part-6-scoring-many-runs) | analyst machine | 2+ labelled runs | 5 min |
 | [7. v0.2 acceptance checklist](#part-7-v02-acceptance-checklist) | n/a | Parts 1 to 6 | n/a |
+| [8. v0.3 artifacts from a real run](#part-8-v03-artifacts-from-a-real-run) | Windows + analyst machine | EZ tools, Volatility, Zeek | 30 min |
+| [9. v0.4 attribution on real runs](#part-9-v04-attribution-on-real-runs) | analyst machine | labelled runs | 30 min |
 
 Parts 1 to 3 need no VM, model or network. Parts 4 to 6 are the real v0.2 milestone. The first
 lab runs (15 Nov 2026: VMware Workstation, Windows 11 24H2, Kali, Qwen2.5-7B) found the problems
@@ -40,13 +42,17 @@ pip install -e ".[evtx,dev]"
 
 If activation is blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
+On a managed laptop where application control (Device Guard) blocks `pytest.exe` or `ptir.exe` in
+`.venv\Scripts`, run them through Python instead: `python -m pytest -q`, and
+`python -m prompttracir.cli <command>` wherever this guide says `ptir <command>`.
+
 ### 1.2 Run
 
 ```bash
 pytest -q
 ```
 
-Expected: `101 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
+Expected: `121 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
 `pytest -q -k adfir_tampering`.
 
 ### 1.3 What the tests cover
@@ -57,12 +63,14 @@ Expected: `101 passed`. Run one file with `pytest -q tests/test_importers.py`, o
 | `tests/test_runs.py` | v0.2 | `ptir add-run` kind mapping, `collection.json` override, label files skipped, unknown kinds rejected, re-adding is idempotent, `ptir add` on a directory |
 | `tests/test_harness.py` | v0.2 | raw source bytes kept under `sources/`; scenario schema rules; `prepare` writes and splits VM files from web pages; `label_run` matches the sample's ground truth, resolves child PID to ProcessGuid, ignores sink hits from other runs, labels legitimate and Claude Code runs; one tool call per turn with temperature and seed (v0.3.1) |
 | `tests/test_importers.py` | v0.2 | Claude Code transcripts; OpenTelemetry GenAI spans (single document and JSONL, with and without content); AgentDFIR package import (single and chunked blobs) and 5 kinds of tampering |
-| `tests/test_batch.py` | v0.2 | `ptir eval-batch` aggregation, reviewed-only filter, report files |
+| `tests/test_batch.py` | v0.2, v0.4 | `ptir eval-batch` aggregation, reviewed-only filter, report files; family filters, calibration and complete-evidence numbers, `--without` ablation re-analysis into a tag, `--config` tuning loop |
+| `tests/test_attribution.py` | v0.4 | settings file (defaults, overrides, typos rejected, checked-in defaults match); clock offset from child PIDs vs fixed windows; Security 4688 instead of Sysmon, and 4688 + Sysmon as one process; 4104 script block links a `-File` PowerShell run; UserAssist, LNK and ShellBags human signals; non-interactive logon; Claude Code runtime inferred, decoy `node.exe` not picked; `--without` writes a separate analysis |
+| `tests/test_calibration.py` | v0.4 | ECE and Brier score; P(agent) per gold process and tool-link scores in `ptir eval` |
 | `tests/test_zeek.py` | v0.3 | Zeek `conn`, `dns` and `http` logs in JSON and tab-separated form (same events either way), unset fields, missing header, `add-run` patterns, Zeek DNS answers in the sample case |
 | `tests/test_file_access.py` | v0.3 | Security 4663 read and write masks, non-file objects skipped; the graph joins 4663 to processes by PID and time, corroborates the trace's `read_file`, and flags curl reading the secret |
 | `tests/test_artifacts.py` | v0.3 | every `ez_*` and `vol_*` parser: path joining, timestomp flags, USN Close-record selection and rename pairing, Prefetch run times and paths, Amcache SHA-1 padding and rows without a path (lab fixture), SRUM bytes, UserAssist / autorun / other registry rows, LNK / Jump List / ShellBags, Volatility pstree flattening, banner skipping and unreadable command lines; `add-run` patterns; `ingested_at`; empty files |
 | `tests/test_scope_paths.py` | v0.3.1 | escaped and quoted paths from lab run03 raise no scope findings; a secret outside the folder still does; UNC prefixes kept |
-| `tests/test_process_dedupe.py` | v0.3.1 | the Sysmon/4688 copies of one process 1 ms apart (lab run01); 4688-only processes kept; human labels through a shell started before collection; ignored injections and `unknown` impact not scored |
+| `tests/test_process_dedupe.py` | v0.3.1, v0.4 | the Sysmon/4688 copies of one process 1 ms apart (lab run01), merged as corroboration in v0.4 with a configurable window; 4688-only processes kept; human labels through a shell started before collection; ignored injections and `unknown` impact not scored |
 | `tests/test_cli_messages.py` | v0.3.1 | missing case and envelope messages; `add-run` on an existing case reports only new files |
 | `tests/test_scripted_model.py` | v0.3.1 | the scripted model's plan, no shell call when the payload fragment is removed, ignore mode, and an end-to-end agent run against it |
 
@@ -139,6 +147,32 @@ python -m harness.scenario prepare harness/scenarios/web_exfil_01.json --web-onl
 
 Check: three `OK` lines; the first dry run lists `api_keys.txt` and `README.md`, the second lists
 `guide.html`.
+
+### 3.3 v0.4 commands
+
+Run after 3.1, on the same `cases/demo`:
+
+```bash
+ptir config                                    # all attribution settings as JSON
+ptir analyze cases/demo
+ptir eval cases/demo $S/ground_truth.json
+ptir analyze cases/demo --without sysmon       # ablation, written to output/without-sysmon/
+```
+
+Check:
+
+- `ptir analyze` now also prints `"attribution": {"unknown": 1, "human": 4, "agent": 2}` and
+  `"config": "84d416be6878"` (the fingerprint of the default settings).
+- `cases/demo/output/attribution.json`: `cmd.exe` and `curl.exe` are `agent` with
+  `agent_probability` above 0.95; `git.exe` and both `pwsh.exe` are `human` (about 0.12);
+  `explorer.exe` is `unknown`. Each entry lists its weighted `contributions`.
+- `cases/demo/output/correlation.json`: `runtime_method` is `pid` and `clock_offset_method` is
+  `child_pid` with an offset of 0.05 s.
+- `ptir eval`: attribution accuracy and macro-F1 are 1.0, and `calibration` shows `n` 3 with an
+  ECE of about 0.07.
+- The `--without sysmon` run prints `"processes": 0` but still `"first_deviation": "tool_call:t2"`:
+  the trace alone finds the deviation, but nothing can be attributed. `output/` still holds the
+  full analysis.
 
 Clean up with `rm -rf cases` (the folder is git-ignored either way).
 
@@ -477,3 +511,79 @@ v0.3 acceptance:
 - [ ] Any column fixes from that run are covered by a fixture.
 - [ ] One real run with Zeek and the canary audit: `zeek_dns`, `zeek_http` and Security 4663
       events ingest, and the corroborated `read` edge appears (steps 5 and 6).
+
+---
+
+## Part 9: v0.4 attribution on real runs
+
+v0.4 changes how processes are labelled, not what is collected, so it reuses the runs from
+Parts 4, 5 and 8. What it needs from them:
+
+| Evidence | Gives | Collected by |
+|---|---|---|
+| Sysmon 1, or Security 4688 with command lines | the process tree | `collect-run.ps1` (both) |
+| Security 4624 | logon type of each process | `collect-run.ps1` |
+| PowerShell 4104 | script blocks, to link PowerShell tool calls | `collect-run.ps1` |
+| UserAssist, LNK, Jump Lists, ShellBags (`ez_registry`, `ez_lnk`, `ez_jumplist`, `ez_shellbags`) | human-side signals | `parse-artifacts.ps1` (Part 8) |
+
+### 9.1 Make the human session harder to tell apart
+
+The scenarios' `human_commands` are typed in a terminal, which the v0.2 signals already catch.
+In at least a few runs, have the person in window H also:
+
+1. open `C:\Users\lab\project\notes.md` by double-clicking it in Explorer (creates a LNK file and
+   a Jump List entry; notepad's command line names the file);
+2. start Notepad or PowerShell from the Start menu (UserAssist);
+3. browse to `C:\Users\lab\project` in Explorer first (ShellBags).
+
+Write which of these were done in `runs/<run>/notes.md`.
+
+### 9.2 Check one run by hand
+
+After `ptir analyze runs/run01/case`:
+
+- `output/correlation.json`: `runtime_method` is `pid` for the harness (`inferred` for Claude
+  Code). `clock_offset_method` is `child_pid` and `clock_offset_s` is small (under 1 s on one
+  machine). A large offset means the trace and the host disagree on time. That's fine, the offset
+  corrects it, but write it down.
+- `output/attribution.json`: every process under the agent runtime is `agent`; the window-H
+  shell and its children are `human`. For the actions in 9.1, the human entries list
+  `userassist_launch`, `shell_file_open` or `shellbag_folder` in `contributions`.
+- `output/tool_links.json`: each shell tool call is `corroborated` with `child_pid_match`.
+
+### 9.3 Claude Code run (Part 5)
+
+After `ptir analyze runs/cc01/case`, `correlation.json` should show `runtime_method: inferred`
+with `runtime_signals.pid` equal to the PID you noted in Part 5 step 3, and
+`tool_calls_matched_by_children` listing the Bash tool calls. If it picked another process, or
+none, keep the run: it is a failure case for the report.
+
+### 9.4 Ablations
+
+```bash
+ptir eval-batch runs --reviewed-only --without sysmon       # 4688 / 4104 coverage only
+ptir eval-batch runs --reviewed-only --without psreadline
+ptir eval-batch runs --reviewed-only --without ez_registry --without ez_lnk --without ez_jumplist --without ez_shellbags
+```
+
+Each writes `runs/results/<tag>/results.json`. Compare the attribution macro-F1, abstention and
+tool-link precision with the full run (`runs/results/results.json`). Without Sysmon the links
+should still be found from 4688 (lower recall is expected if 4688 command-line logging was off).
+
+### 9.5 Tuning (training split only)
+
+Follow `configs/README.md`: try settings on the training families with
+`ptir eval-batch ... --families ... --config FILE --tag tune-NN`, commit the chosen file, then
+score the test families once.
+
+v0.4 acceptance (the roadmap's "done when", on the training split collected so far):
+
+- [ ] `pytest -q` passes, CI green.
+- [ ] Tool-to-process link precision is at least 0.95 (`tool-to-process link precision` line of
+      `eval-batch`, where the harness recorded child PIDs).
+- [ ] Attribution macro-F1 is at least 0.85 on complete-evidence runs (`on complete-evidence runs`
+      line).
+- [ ] One Claude Code run has its runtime inferred correctly (9.3).
+- [ ] The ablations in 9.4 have been run and their numbers saved.
+- [ ] The settings used are committed under `configs/` and their fingerprint recorded.
+

@@ -17,6 +17,23 @@ def prf(pred: set, gold: set) -> dict:
             "pred": len(pred), "gold": len(gold)}
 
 
+def calibration(pairs: list[tuple[float, bool]], bins: int = 10) -> dict:
+    """Expected calibration error and Brier score for (predicted probability, outcome) pairs."""
+    if not pairs:
+        return {"ece": None, "brier": None, "n": 0}
+    n = len(pairs)
+    ece = 0.0
+    for b in range(bins):
+        lo, hi = b / bins, (b + 1) / bins
+        sel = [(p, y) for p, y in pairs if lo <= p < hi or (b == bins - 1 and p == 1.0)]
+        if sel:
+            conf = sum(p for p, _ in sel) / len(sel)
+            acc = sum(1 for _, y in sel if y) / len(sel)
+            ece += len(sel) / n * abs(conf - acc)
+    brier = sum((p - (1.0 if y else 0.0)) ** 2 for p, y in pairs) / n
+    return {"ece": round(ece, 4), "brier": round(brier, 4), "n": n}
+
+
 def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dict:
     chain = case.read_output("chain.json") or {}
     graph = case.read_output("graph.json") or {"edges": []}
@@ -43,7 +60,9 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dic
     gold_labels = dict(gt.get("process_labels", {}))
     gold_labels.update(_labels_from_pids(case, gt))
     by_guid = {a["process_guid"]: a["label"] for a in attrs}
+    prob = {a["process_guid"]: a.get("agent_probability") for a in attrs}
     rows = [(gold, by_guid.get(g, "missing")) for g, gold in gold_labels.items()]
+    probs = [(prob.get(g), gold) for g, gold in gold_labels.items()]
     classes = sorted({g for g, _ in rows})
     per_class = {c: prf({i for i, (_, p) in enumerate(rows) if p == c},
                         {i for i, (g, _) in enumerate(rows) if g == c}) for c in classes}
@@ -51,13 +70,19 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dic
         "accuracy": round(sum(g == p for g, p in rows) / len(rows), 3) if rows else None,
         "macro_f1": round(sum(v["f1"] for v in per_class.values()) / len(per_class), 3) if per_class else None,
         "abstention_rate": round(sum(p == "unknown" for _, p in rows) / len(rows), 3) if rows else None,
-        "rows": [{"gold": g, "pred": p} for g, p in rows],
+        "rows": [{"gold": g, "pred": p, "p_agent": pa} for (g, p), (pa, _) in zip(rows, probs)],
+        # calibration of P(agent) on processes whose gold label is agent or human
+        "calibration": calibration([(pa, gold == "agent") for pa, gold in probs
+                                    if pa is not None and gold in ("agent", "human")]),
     }
     if "tool_process_links" in gt:   # written by harness/label_run.py from child PID + Sysmon
         links = case.read_output("tool_links.json") or []
         pred_links = {(f"tool_call:{l['tool_call_id']}", l["process_guid"]) for l in links}
         gold_links = {(tc, g) for tc, g in gt["tool_process_links"].items()}
         out["tool_process_links"] = prf(pred_links, gold_links)
+        out["tool_process_links"]["scored"] = [
+            {"score": l["score"], "correct": (f"tool_call:{l['tool_call_id']}", l["process_guid"]) in gold_links,
+             "status": l["status"]} for l in links]
     pred_imp = {i["destination"]: i["level"] for i in impact}
     # "unknown" means the labeller had no sink evidence either way: shown, but not scored
     out["impact"] = {d: {"gold": lvl, "pred": pred_imp.get(d, "missing"), "scored": lvl != "unknown"}

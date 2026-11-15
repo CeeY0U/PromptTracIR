@@ -13,12 +13,12 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.3.1 (15 Nov 2026). The full pipeline has now run on real lab evidence: five runs on a
-> Windows 11 24H2 VM with Sysmon, Security auditing, a packet capture, EZ Tools, Volatility and
-> Zeek. v0.3.1 fixes what those runs exposed (collection, dirty registry hives, Amcache, escaped
-> paths in the scope rules, process de-duplication, scoring) and adds a scripted model for
-> positive cases, because the 7B model ignored every injected payload. Next: v0.4.0, the
-> attribution engine. Submission deadline: 29 Nov 2026, 23:59. See [ROADMAP.md](ROADMAP.md),
+> Status: v0.4.0 (16 Nov 2026). The full pipeline has run on real lab evidence (five runs on a
+> Windows 11 24H2 VM, Nov 2026), v0.3.1 fixed what those runs exposed, and v0.4.0 adds the
+> attribution engine: a settings file, clock-offset estimation, 4688 / 4104 coverage, human-side
+> signals from UserAssist, LNK, ShellBags and logon types, Claude Code runtime inference,
+> calibrated P(agent) and ablations. The weights are still the defaults until they are tuned on
+> real runs. Submission deadline: 29 Nov 2026, 23:59. See [ROADMAP.md](ROADMAP.md),
 > [docs/TESTING.md](docs/TESTING.md) and [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -67,15 +67,19 @@ agent, git attributed to the human, exfiltration to `collect.attacker-lab.test` 
 | `ptir kinds` | List evidence kinds and whether each is parsed or preserved only. |
 | `ptir ingest CASE` | Parse evidence into canonical events (DuckDB). |
 | `ptir analyze CASE [options]` | Correlate, attribute, build the graph, run rules, traceback, impact. |
+| `ptir config` | Print the attribution settings (weights, thresholds, time windows) as JSON. |
 | `ptir verify CASE` | Re-hash every preserved file. |
 | `ptir serve CASE` | Analyst UI: attack-flow graph, findings, impact, timeline, raw records. |
 | `ptir eval CASE GROUND_TRUTH` | Score the case against harness ground truth. |
-| `ptir eval-batch ROOT` | Score every analysed run under `ROOT` and write `results.json` and `per_run.csv`. |
+| `ptir eval-batch ROOT [options]` | Score every analysed run under `ROOT` and write `results.json` and `per_run.csv`. `--families` / `--exclude-families` pick a split; `--without KIND`, `--config F` or `--tag T` re-analyse every run into `output/<tag>/` first (ablations, tuning). |
 
 `analyze` options:
 
 * `--replay-url URL --replay-model M [--samples N]` leave-one-out counterfactual replay against the same local model the agent used. Without it, a heuristic localizer is used and its edges are marked as weaker.
 * `--llm-url URL --llm-model M` local-LLM intent classification and an evidence-cited summary.
+* `--config FILE` attribution settings; only the keys you change (see `configs/README.md`).
+* `--without KIND` (repeatable) ignore that evidence kind, for ablations. Outputs go to
+  `output/without-<kinds>/` (or `--tag NAME`), so the full analysis in `output/` is kept.
 
 Both expect an OpenAI-compatible server, e.g. `llama-server -m model.gguf --port 8080 --jinja`
 (llama.cpp) or Ollama at `http://127.0.0.1:11434`.
@@ -119,8 +123,10 @@ attribution (v0.4) and reconstruction (v0.5) use them as independent signals.
 | `chain.json` | Entry points, first deviating tool call, the attack-chain node set |
 | `findings.json` | Scope violations: out-of-scope files, external egress, persistence, credential access |
 | `impact.json` | Exfiltration level per destination with reasons |
-| `attribution.json` | agent / human / mixed / unknown per process, with the signals behind each label |
+| `attribution.json` | agent / human / mixed / unknown per process, with the weighted signals behind each label, `agent_probability`, and the logs that saw the process |
 | `tool_links.json` | Tool call to process links with scores |
+| `correlation.json` | Per agent session: how the runtime process was found (PID, GUID or inferred) and the trace-to-host clock offset |
+| `config.json` | The settings used, their fingerprint, evidence kinds used and any `--without` |
 | `traceback.json` | What replay or the heuristic tested and found |
 | `llm.json` | LLM classifications, validated summary, unsupported-claim rate |
 
@@ -157,22 +163,36 @@ Design rules worth keeping:
    inferred edges through `ProvGraph.add_inferred`, and LLM citations to unknown IDs are dropped.
 2. A link is corroborated only when two independent sources agree (e.g. the harness recorded child
    PID 5200 and Sysmon shows PID 5200 created in the tool-call window).
-3. No single attribution signal decides a label. The weights are in `correlate.W`; tune them on
-   training runs only and report them.
+3. No single attribution signal decides a label. The weights are in `prompttracir/config.py`
+   (`ptir config`); tune them on training runs only and report the file (`configs/README.md`).
 4. A connection alone is never confirmed exfiltration.
 
-### Attribution signals (`correlate.py`)
+### Attribution signals (`correlate.py`, weights in `config.py`)
 
-| Signal | Side | Weight |
-|---|---|---|
-| process created by a tool call (PID/GUID match) | agent | 3.0 |
-| descendant of such a process | agent | 2.5 |
-| descendant of the agent runtime (python/node) | agent | 2.0 |
-| non-interactive shell flags | agent (weak) | 0.5 |
-| explorer / terminal ancestry without passing through the agent runtime | human | 2.0 |
-| command appears in PSReadLine history | human (weak) | 1.0 |
+| Signal | Side | Default weight | Evidence |
+|---|---|---|---|
+| process created by a tool call (PID/GUID match) | agent | 3.0 | trace + Sysmon / 4688 |
+| descendant of such a process | agent | 2.5 | process tree |
+| descendant of the agent runtime (python/node/claude) | agent | 2.0 | process tree |
+| non-interactive shell flags | agent (weak) | 0.5 | command line |
+| explorer / terminal ancestry without passing through the agent runtime | human | 2.0 | process tree |
+| command appears in PSReadLine history | human (weak) | 1.0 | PSReadLine |
+| image started from the Explorer shell | human | 2.0 | UserAssist (`ez_registry`) |
+| a file named in the command line was opened through Explorer | human | 1.5 | LNK / Jump Lists |
+| working directory browsed in Explorer shortly before | human (weak) | 0.5 | ShellBags |
+| started while no agent session was running | human (weak) | 1.0 | trace + process time |
+| non-interactive logon (4624 type 3, 4, 5, ...) | context | human signals not counted | Security 4624 |
 
 Label is agent or human when one side leads by 1.5, mixed when both are high, otherwise unknown.
+`agent_probability` is `1 / (1 + exp(-(agent - human) / 1.5))`; the temperature is a setting, tuned
+for calibration (ECE in `eval-batch`).
+
+Tool-call-to-process links use child PID or ProcessGuid (corroborated), else descent from the
+agent runtime plus command similarity, or a PowerShell 4104 script block matching the tool's
+command (inferred). The trace-to-host clock offset is estimated per session from child PIDs.
+When Sysmon is missing, Security 4688 builds the process tree. For traces without a runtime PID
+(Claude Code) the runtime is inferred from `claude.exe` / `node.exe` processes whose children
+match the session's tool calls.
 
 ---
 
@@ -228,7 +248,7 @@ Mapped to the proposal so the team can split it up:
 | Scenario schema, setup, labelling with ProcessGuid and sink window | done (v0.2) | 3 scenarios; the dataset needs 60+ runs |
 | Lab collection script (logs, pcap, SRUM, Prefetch, Amcache, hives, LNK, memory, KAPE) | done (v0.2), run on the lab VM (v0.3.1) | exports logs from boot; copies hive transaction logs |
 | Sysmon / Security / PowerShell / PSReadLine / Zeek parsers | done | |
-| Tool-to-process correlation, human/agent attribution | done | add 4104, logon-type, UserAssist signals |
+| Tool-to-process correlation, human/agent attribution | done (v0.4) | settings file, clock offset, 4688/4104 coverage, UserAssist / LNK / ShellBags / logon signals, Claude Code runtime inference, calibrated P(agent); weights not yet tuned on real runs |
 | Provenance graph, backward/forward traversal | done | |
 | Scope rules, first deviation, exfil impact | done | |
 | Leave-one-out replay traceback | done | needs a followed injection on a real model; the scripted model (v0.3.1) gives positive cases meanwhile |
@@ -241,15 +261,19 @@ Mapped to the proposal so the team can split it up:
 | PromptLocate / TracLLM / AttnTrace modules | optional | add as further localizers in `traceback.py` |
 | STIX 2.1 export with ATLAS tags | **todo** | |
 | Multi-run evaluation | done (v0.2) | `ptir eval-batch` |
-| Baselines, ablations | **todo** | v0.4 adds `--without KIND`; baselines in v0.8 |
+| Ablations | done (v0.4) | `ptir analyze --without KIND`, `ptir eval-batch --without KIND` |
+| Baselines | **todo** | v0.8 |
 
 ## Repository layout
 
 ```
 prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, llm, pipeline,
-                runs (add-run), adfir (import), batch (eval-batch), api, cli, web/
-harness/        agent.py (traced lab agent), scripted_model.py, scenario.py, exfil_sink.py, label_run.py, scenarios/
-tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, audit-canary.ps1, sysmon-lab.xml
+                runs (add-run), adfir (import), batch (eval-batch), config, api, cli, web/
+harness/        agent.py (traced lab agent), scripted_model.py, scenario.py, exfil_sink.py, label_run.py,
+                scenarios/
+tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, audit-canary.ps1,
+                sysmon-lab.xml
+configs/        attribution-defaults.json, tuned settings files, tuning procedure
 docs/           TESTING.md (automated tests, lab runs, acceptance checks)
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests

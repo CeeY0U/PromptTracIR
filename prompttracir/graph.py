@@ -203,17 +203,28 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
                          attrs={"image": p.image, "pid": p.pid, "command_line": p.command_line,
                                 "user": p.user, "ts": p.timestamp.isoformat(),
                                 "attribution": a.label.value if a else "agent_runtime",
-                                "attribution_signals": a.signals if a else []},
-                         evidence=[p.event_id]))
+                                "attribution_signals": a.signals if a else [],
+                                "agent_probability": a.agent_probability if a else None,
+                                "seen_by": pidx.seen_by.get(guid, [])},
+                         evidence=[p.event_id] + pidx.corroborating.get(guid, [])))
     for guid in in_graph:
         p = pidx.by_guid[guid]
-        if p.parent_process_guid in in_graph:
-            pg.add_edge(Edge(src=f"process:{p.parent_process_guid}", dst=f"process:{guid}",
-                             relation="spawned", status=O, evidence=[p.event_id]))
+        parent = pidx.parent_of.get(guid)
+        if parent in in_graph:
+            joined = p.parent_process_guid is None      # 4688: parent found by PID and time
+            pg.add_edge(Edge(src=f"process:{parent}", dst=f"process:{guid}",
+                             relation="spawned", status=O, evidence=[p.event_id],
+                             signals={"joined_by": "parent_pid_and_time"} if joined else {}))
     for s in sessions.values():
+        if f"session:{s.session_id}" in pg.g:
+            pg.node(f"session:{s.session_id}").attrs.update(
+                {"runtime_method": s.runtime_method, "clock_offset_s": round(s.clock_offset, 3)})
         if s.runtime_guid in in_graph:
+            inferred = s.runtime_method == "inferred"
             pg.add_edge(Edge(src=f"session:{s.session_id}", dst=f"process:{s.runtime_guid}",
-                             relation="runs_in", status=O, evidence=[s.start.event_id]))
+                             relation="runs_in", status=I if inferred else O,
+                             confidence=0.7 if inferred else 1.0,
+                             signals=s.runtime_signals if inferred else {}, evidence=[s.start.event_id]))
     for l in links:
         pg.add_edge(Edge(src=f"tool_call:{l.tool_call_id}", dst=f"process:{l.process_guid}",
                          relation="spawned", status=l.status, confidence=l.score,
@@ -248,7 +259,8 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
         if not s or not s.runtime_guid:
             continue
         res = tool_results.get(tcid)
-        lo, hi = call.ts() - 0.5, (res.ts() if res else call.ts() + 30) + 0.5
+        off = s.clock_offset
+        lo, hi = call.ts() + off - 0.5, (res.ts() if res else call.ts() + 30) + off + 0.5
         claimed = _claimed_objects(res)
         for e in host_fx:
             if effect_guid[e.event_id] != s.runtime_guid or not (lo <= e.ts() <= hi) or not e.object:

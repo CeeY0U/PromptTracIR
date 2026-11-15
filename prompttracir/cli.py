@@ -6,11 +6,14 @@
   ptir kinds
   ptir import-adfir CASE PACKAGE_DIR [--force]
   ptir ingest CASE
-  ptir analyze CASE [--replay-url URL --replay-model M] [--llm-url URL --llm-model M]
+  ptir analyze CASE [--config FILE] [--without KIND ...] [--tag NAME]
+                    [--replay-url URL --replay-model M] [--llm-url URL --llm-model M]
+  ptir config                                    (print the default attribution settings)
   ptir verify CASE
   ptir serve CASE [--port 8000]
   ptir eval CASE GROUND_TRUTH.json
-  ptir eval-batch ROOT [--out DIR] [--reviewed-only]
+  ptir eval-batch ROOT [--out DIR] [--reviewed-only] [--families F,...] [--exclude-families F,...]
+                       [--reanalyze] [--config FILE] [--without KIND ...] [--tag NAME]
 """
 from __future__ import annotations
 
@@ -62,6 +65,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("case")
     p.add_argument("--replay-url"); p.add_argument("--replay-model"); p.add_argument("--samples", type=int, default=3)
     p.add_argument("--llm-url"); p.add_argument("--llm-model")
+    p.add_argument("--config", help="attribution settings JSON (only the keys you change; see `ptir config`)")
+    p.add_argument("--without", action="append", metavar="KIND", default=[],
+                   help="leave this evidence kind out (ablation); repeat for several")
+    p.add_argument("--tag", help="write outputs to output/TAG/ instead of output/")
+
+    sub.add_parser("config", help="print the default attribution settings as JSON")
 
     p = sub.add_parser("verify", help="re-hash preserved evidence")
     p.add_argument("case")
@@ -77,6 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", help="write results.json and per_run.csv here (default: ROOT/results)")
     p.add_argument("--case-name", default="case")
     p.add_argument("--reviewed-only", action="store_true", help="skip runs whose labels were not reviewed")
+    p.add_argument("--families", help="only these scenario families (comma-separated), e.g. the training split")
+    p.add_argument("--exclude-families", help="skip these scenario families (comma-separated)")
+    p.add_argument("--reanalyze", action="store_true", help="analyze every run again before scoring")
+    p.add_argument("--config", help="attribution settings for --reanalyze")
+    p.add_argument("--without", action="append", metavar="KIND", default=[],
+                   help="ablation: leave this evidence kind out when re-analysing; repeat for several")
+    p.add_argument("--tag", help="output/TAG/ for the re-analysis (default: derived from --without)")
 
     a = ap.parse_args(argv)
 
@@ -158,7 +174,19 @@ def main(argv: list[str] | None = None) -> int:
         if a.llm_url:
             from .llm import LocalLLM
             llm = LocalLLM(a.llm_url, a.llm_model or "local")
-        print(json.dumps(analyze(Case(a.case), replayer, llm, a.samples), indent=2))
+        from . import config as config_mod
+        try:
+            cfg = config_mod.load(a.config)
+            res = analyze(Case(a.case), replayer, llm, a.samples, config=cfg, without=a.without,
+                          tag=a.tag or (None if not a.without else
+                                        "without-" + "-".join(sorted(a.without)).replace("_", "")))
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        print(json.dumps(res, indent=2))
+    elif a.cmd == "config":
+        from . import config as config_mod
+        print(json.dumps(config_mod.DEFAULTS, indent=2))
     elif a.cmd == "verify":
         res = Case(a.case).verify_evidence()
         for d, ok in res.items():
@@ -181,8 +209,18 @@ def main(argv: list[str] | None = None) -> int:
         if not runs:
             print(f"no runs under {a.root} with ground_truth.json and {a.case_name}/case.json", file=sys.stderr)
             return 1
-        report = evaluate_runs(runs, a.case_name, a.reviewed_only)
-        j, c = write_report(report, a.out or Path(a.root) / "results")
+        from . import config as config_mod
+        split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None  # noqa: E731
+        try:
+            cfg = config_mod.load(a.config) if a.config else None
+            report = evaluate_runs(runs, a.case_name, a.reviewed_only, families=split(a.families),
+                                   exclude_families=split(a.exclude_families), reanalyze=a.reanalyze,
+                                   config=cfg, without=a.without, tag=a.tag)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        tag = report["condition"]["tag"]
+        j, c = write_report(report, a.out or Path(a.root) / "results" / (tag or ""))
         print("\n".join(summary_lines(report)))
         print(f"\nwrote {j} and {c}")
     return 0
