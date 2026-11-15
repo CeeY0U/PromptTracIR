@@ -13,8 +13,12 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.3.0. The full pipeline runs end to end on synthetic evidence and on the formats
-> listed below; lab tooling for real runs is in place. See [ROADMAP.md](ROADMAP.md),
+> Status: v0.3.1 (15 Nov 2026). The full pipeline has now run on real lab evidence: five runs on a
+> Windows 11 24H2 VM with Sysmon, Security auditing, a packet capture, EZ Tools, Volatility and
+> Zeek. v0.3.1 fixes what those runs exposed (collection, dirty registry hives, Amcache, escaped
+> paths in the scope rules, process de-duplication, scoring) and adds a scripted model for
+> positive cases, because the 7B model ignored every injected payload. Next: v0.4.0, the
+> attribution engine. Submission deadline: 29 Nov 2026, 23:59. See [ROADMAP.md](ROADMAP.md),
 > [docs/TESTING.md](docs/TESTING.md) and [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -201,6 +205,8 @@ python -m harness.scenario prepare harness\scenarios\web_exfil_01.json --files-o
 .\tools\collect-run.ps1 -Phase Start -RunDir C:\lab\runs\run01             # elevated
 $env:PTIR_LAB = "1"
 python harness\agent.py --scenario harness\scenarios\web_exfil_01.json --base-url http://127.0.0.1:8080 --out C:\lab\runs\run01
+# for a guaranteed followed injection, serve the scripted model instead of llama-server:
+#   python -m harness.scripted_model --scenario harness\scenarios\web_exfil_01.json --port 8080
 # second window: . .\tools\human-session.ps1 -Run run01 -OutDir C:\lab\runs\run01 -Scenario harness\scenarios\web_exfil_01.json
 .\tools\collect-run.ps1 -Phase Stop -RunDir C:\lab\runs\run01 -WinPmem C:\tools\winpmem.exe
 python harness\label_run.py C:\lab\runs\run01 --sink \\attacker\share\sink_log.jsonl
@@ -220,17 +226,17 @@ Mapped to the proposal so the team can split it up:
 | Case format, hashing, custody, canonical schema | done | |
 | Agent trace + harness with child-PID capture and request logging | done | plain loop; LangGraph optional; raw source bytes kept (v0.2) |
 | Scenario schema, setup, labelling with ProcessGuid and sink window | done (v0.2) | 3 scenarios; the dataset needs 60+ runs |
-| Lab collection script (logs, pcap, SRUM, Prefetch, Amcache, hives, LNK, memory, KAPE) | done (v0.2) | not yet run on a real VM |
+| Lab collection script (logs, pcap, SRUM, Prefetch, Amcache, hives, LNK, memory, KAPE) | done (v0.2), run on the lab VM (v0.3.1) | exports logs from boot; copies hive transaction logs |
 | Sysmon / Security / PowerShell / PSReadLine / Zeek parsers | done | |
 | Tool-to-process correlation, human/agent attribution | done | add 4104, logon-type, UserAssist signals |
 | Provenance graph, backward/forward traversal | done | |
 | Scope rules, first deviation, exfil impact | done | |
-| Leave-one-out replay traceback | done | needs real model runs to validate |
+| Leave-one-out replay traceback | done | needs a followed injection on a real model; the scripted model (v0.3.1) gives positive cases meanwhile |
 | Local LLM classification + validated summary | done | needs prompt tuning on real runs |
 | Analyst UI | done (single page + Cytoscape) | proposal said React; either port or note the change |
-| MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3, synthetic fixtures) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; needs one real lab run to confirm columns |
+| MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3), checked on real output (v0.3.1) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; `$MFT`/`$J` only with KAPE |
 | Zeek DNS / HTTP, Security 4663 file reads | done (v0.3) | 4663 needs `tools/audit-canary.ps1` on the VM |
-| Volatility 3 cross-check of the transcript | parsers done (v0.3) | `vol_pslist`, `vol_cmdline`, `vol_netscan` ingest; the transcript cross-check itself is v0.5 |
+| Volatility 3 cross-check of the transcript | parsers done (v0.3) | `vol_pslist`, `vol_cmdline`, `vol_netscan` ingest (netstat fallback on 24H2); the transcript cross-check itself is v0.5 |
 | AgentDFIR / OpenTelemetry trace adapters | done (v0.2) | Claude Code transcripts have no PIDs; signature check left to `agentdfir verify` |
 | PromptLocate / TracLLM / AttnTrace modules | optional | add as further localizers in `traceback.py` |
 | STIX 2.1 export with ATLAS tags | **todo** | |
@@ -242,8 +248,8 @@ Mapped to the proposal so the team can split it up:
 ```
 prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, llm, pipeline,
                 runs (add-run), adfir (import), batch (eval-batch), api, cli, web/
-harness/        agent.py (traced lab agent), scenario.py, exfil_sink.py, label_run.py, scenarios/
-tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, sysmon-lab.xml
+harness/        agent.py (traced lab agent), scripted_model.py, scenario.py, exfil_sink.py, label_run.py, scenarios/
+tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, audit-canary.ps1, sysmon-lab.xml
 docs/           TESTING.md (automated tests, lab runs, acceptance checks)
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests

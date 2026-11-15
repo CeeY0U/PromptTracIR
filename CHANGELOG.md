@@ -2,6 +2,63 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.3.1] - 2026-11-16
+
+Fixes from the first real lab runs (15 Nov 2026: Windows 11 24H2 VM, Kali attacker box,
+Qwen2.5-7B through llama-server, runs run01 to run04 and a teammate's batch).
+
+### Fixed
+- Timestamps whose fraction is not 3 or 6 digits long (`07:09:00.5`) failed to parse on
+  Python 3.10, which CI tests on: `parse_time`, `label_run.py` and the run window in `eval`
+  now pad or cut the fraction to 6 digits.
+- `collect-run.ps1 -Phase Start` stopped before starting the capture on Windows PowerShell 5.1:
+  `pktmon stop` with nothing running writes to stderr, which "Stop" turned into a terminating error.
+- Registry hives in use (`NTUSER.DAT`, `UsrClass.dat`, `Amcache.hve`) were copied without their
+  `.LOG1`/`.LOG2` files, so RECmd and SBECmd refused them and AmcacheParser wrote rows with no
+  path. The logs are now copied next to each hive. `parse-artifacts.ps1` re-runs RECmd and SBECmd
+  with `--nl` if a hive is still refused, removing the failed attempt's CSVs, and warns.
+- Event logs were exported only from `-Phase Start`, so a shell opened earlier (the human's
+  window) had no creation record and its processes could not be labelled. Logs are now exported
+  from boot, at most `-LookbackMinutes` (default 360) before the start; `collection.json` records
+  `events_since_utc`.
+- Scope rules raised `out_of_scope_file` findings for paths inside the allowed folder when a command
+  wrote them escaped (`C:\\Users\\lab\\...` inside a Python string) or cmd.exe left a trailing
+  backslash: the benign run03 got four findings and a first deviation. Paths are normalised first
+  (`scope.normalize_path`); UNC prefixes are kept.
+- `ProcessIndex` kept the Security 4688 copy of a process next to the Sysmon one. Sysmon rounds
+  `UtcTime` to the millisecond, so the 4688 copy looked 1 ms newer, won `find_by_pid`, and has no
+  parent links: eval found no processes to label and attribution scored null on every run. A 4688
+  record within 2 s of a Sysmon record with the same PID and image is now dropped.
+- Eval: an injection the model ignored is no longer scored for localization (nothing deviated to
+  trace back from), an `unknown` exfiltration label is shown but not scored, and a metric with
+  nothing to score is null in `eval-batch` instead of 1.0. Gold labels now reach a root process that
+  started before the evidence window through its children's parent ProcessGuid, limited to the run
+  window (plus 10 minutes) and, for the human, to shell parents.
+- AmcacheParser rows without `FullPath` (hive copied without its logs) gave 0 events; they now keep
+  the program name from `KeyName`, with `path_known: false`.
+- `parse-artifacts.ps1`: `windows.netscan` finds no sockets on Windows 11 24H2 with Volatility 2.28;
+  `windows.netstat` is used instead (same columns), with a warning when both are empty (usually
+  missing `tcpip.pdb` symbols on an offline VM). `$MFT` and `$J` are taken from `-Kape` output.
+- CLI: a missing case, envelope or ground-truth file is a one-line message (with a hint for Git
+  Bash's `/file` path conversion) instead of a traceback; `ptir add-run` on an existing case lists
+  only new files and says how many were already there; JSON inputs are read with or without a BOM.
+
+### Added
+- `harness/agent.py`: one tool call per model turn by default (`--parallel-tools` for the old
+  behaviour), `--temperature` and `--seed`, all recorded in the trace. At temperature 0, run02
+  repeated run01 word for word.
+- `harness/scripted_model.py`: an OpenAI-compatible stand-in for the model server that follows a
+  scenario's injection (`--mode comply`) or ignores it (`--mode ignore`). The agent really runs the
+  tools, so the host evidence is genuine; only the decisions are scripted. Without the payload in
+  its input it makes no shell call, so counterfactual replay behaves as expected.
+- Scenarios: `injection.command`, the exact command the payload asks for (checked against the
+  payload).
+- `docs/TESTING.md`: lab notes from the first runs (two attacker IPs, VMware networking, CPU
+  sockets, Sysmon config check, hosts file, .NET 10, Volatility symbols, Zeek through Docker,
+  snapshot hygiene, window order), a scripted-run section and the real-run results per artifact.
+- Tests: `test_scope_paths.py`, `test_process_dedupe.py`, `test_cli_messages.py`,
+  `test_scripted_model.py`, an Amcache lab fixture and a serial tool-call test (80 -> 101 tests).
+
 ## [0.3.0] - 2026-11-14
 
 Windows forensic normalizers (roadmap v0.3). Tested on synthetic fixtures that follow each tool's

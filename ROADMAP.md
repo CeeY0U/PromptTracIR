@@ -103,6 +103,8 @@ Status (2026-11-12): parsers, fixtures and tests are in place for every EZ Tools
 
 Status (2026-11-14, v0.3.0): Zeek `dns.log` and `http.log` parsers added (Suricata not needed); all Zeek parsers read JSON and tab-separated logs. Security 4663 file access is parsed and joined to processes; `tools/audit-canary.ps1` audits the canary folder. Released as v0.3.0; the real-run check remains.
 
+Status (2026-11-15, v0.3.1): the first five real lab runs (run01 to run04 plus a teammate's batch) ran every parser on real output. Columns matched for every EZ tool except AmcacheParser on a hive copied without its transaction logs, now fixed with a fixture from run01. Fixed from those runs: `collect-run.ps1` (pktmon start error, hive `.LOG1`/`.LOG2` copied, event logs from boot), `parse-artifacts.ps1` (`--nl` retry, netstat fallback, `$MFT`/`$J` from KAPE output), escaped paths that gave a benign run four false findings, the 4688/Sysmon duplicate that emptied attribution, and scoring of ignored injections and `unknown` impact. Still open for the v0.3 check: Security 4663 and the `pid_and_time` read edge need a run in which the secret is read, which the scripted model (below) provides.
+
 ### v0.4: Attribution engine (Phase 3, RQ1)
 
 Goal: defensible agent / human / mixed / unknown labels with numbers.
@@ -208,13 +210,26 @@ A starting matrix, to adjust:
 Rules:
 
 - Every run has a paired human session typing the same commands.
+- Real-model runs where the model ignored the payload go in the "Injection ignored or failed" row. Scripted-model runs (`harness/scripted_model.py`, v0.3.1) supply followed injections with genuine host evidence; report them as their own column, never mixed into the real-model numbers.
 - Split training and test by attack family, and never tune weights or prompts on the test families.
 - Capture all evidence kinds on every run, even those no parser reads yet.
 - Synthetic secrets and isolated machines only.
 
 ## 6. Decisions the team needs to make
 
-1. **Deadline.** The versions have no dates yet. With the submission date, they can be sized into weeks.
+1. **Deadline: 29 November 2026, 23:59.** Two weeks from the first lab runs, so every version below gets two or three days and the dataset is collected alongside, not after:
+
+   | Version | Target date | Scope for the deadline |
+   |---|---|---|
+   | v0.3.1 | 16 Nov | fixes from the first lab runs, scripted model (this release) |
+   | v0.4.0 | 18 Nov | attribution engine; rerun the lab (real model with temperature and seeds, plus scripted runs) |
+   | v0.5 | 21 Nov | localizer interface, memory cross-check, chain metrics |
+   | v0.6 | 23 Nov | local-model classification and grounded summary on real runs |
+   | v0.7 | 25 Nov | STIX 2.1 export; keep the single-page UI (record the React change) |
+   | v0.8 | 27 Nov | freeze the dataset on 26 Nov; baselines, ablations, Table III |
+   | v1.0 | 29 Nov, 23:59 | report, limitations, demo case, tag `v1.0.0`; 28 to 29 Nov is buffer |
+
+   At about four lab runs an hour, 60 runs is two full lab days per person. If the dataset is short on 26 Nov, freeze what exists and report the counts per cell rather than slipping v0.8. The analyst study (Plaso / Timesketch comparison) is the first thing to cut if time runs out.
 2. **LangGraph.** The proposal names a LangGraph agent; the harness is a plain loop. Port it, or record the change in the report.
 3. **React.** The proposal names React; the UI is one HTML page. Same choice.
 4. **AttnTrace.** It needs attention weights that an OpenAI-compatible server does not return. Keep it optional unless someone wants to run the model through a library that exposes them.

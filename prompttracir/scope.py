@@ -24,10 +24,29 @@ CRED_CMD = [r"protecteddata", r"login data", r"dpapi", r"cmdkey", r"vaultcmd", r
 PATH_RE = re.compile(r"(?:[a-zA-Z]:\\|\\\\|~[\\/]|%\w+%\\)[^\s\"'|<>*?]+")
 
 
+def normalize_path(path: str) -> str:
+    """One spelling for a Windows path, so scope checks are not fooled by how a command wrote it.
+
+    Paths copied out of command lines are often escaped once or twice: a path inside a Python
+    or JSON string on a cmd.exe line arrives as ``C:\\\\Users\\\\lab\\\\README.md`` with a stray
+    ``\\`` or quote at the end. Separators become one backslash, surrounding quotes and trailing
+    separators go, and a UNC prefix (``\\\\server\\share``, also when escaped as four
+    backslashes) keeps its two leading backslashes."""
+    p = (path or "").strip().strip("\"'`").replace("/", "\\")
+    unc = p.startswith("\\\\")
+    p = re.sub(r"\\+", r"\\", p).rstrip("\\").strip("\"'`")
+    if unc:
+        p = "\\" + p
+    return p
+
+
 def _under(path: str, roots: list[str]) -> bool:
-    p = path.replace("/", "\\").lower().rstrip("\\")
-    return any(p == r.replace("/", "\\").lower().rstrip("\\") or
-               p.startswith(r.replace("/", "\\").lower().rstrip("\\") + "\\") for r in roots)
+    p = normalize_path(path).lower()
+    for r in roots:
+        root = normalize_path(r).lower()
+        if root and (p == root or p.startswith(root + "\\")):
+            return True
+    return False
 
 
 def is_sensitive(path: str, patterns: list[str] | None = None) -> bool:
@@ -96,7 +115,7 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
             continue
         dst = pg.node(e.dst)
         if dst.kind == NodeKind.FILE and e.relation in ("read", "wrote", "created", "deleted"):
-            path = dst.attrs.get("path", "")
+            path = normalize_path(dst.attrs.get("path", ""))
             # ignore the runtime's own bookkeeping files that are not tied to a tool call
             if pg.node(e.src).kind == NodeKind.PROCESS and owning_tool_call(pg, e.src) is None:
                 continue
@@ -116,9 +135,11 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
         args = n.attrs.get("args")
         cmd = n.attrs.get("command_line") or (args.get("command") if isinstance(args, dict) else None)
         own_image = (n.attrs.get("image") or "").lower()
-        for path in PATH_RE.findall(cmd or ""):
-            if path.lower() == own_image or path.lower().endswith((".exe", ".dll")):
-                continue   # program paths are not data access
+        for raw in PATH_RE.findall(cmd or ""):
+            path = normalize_path(raw)
+            if len(path) <= 3 or path.lower() == normalize_path(own_image).lower() \
+                    or path.lower().endswith((".exe", ".dll")):
+                continue   # program paths and bare drive roots are not data access
             if not _under(path, allowed_paths):
                 s = is_sensitive(path, sens)
                 add("out_of_scope_file", "high" if s else "medium",

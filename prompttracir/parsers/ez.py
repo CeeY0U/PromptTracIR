@@ -208,16 +208,23 @@ def _amcache_sha1(v: str | None) -> str | None:
 
 def parse_amcache(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
     """AmcacheParser -f Amcache.hve --csv: the *FileEntries.csv outputs (Win10+ and Win8 layouts).
-    Other AmcacheParser CSVs (programs, drivers, shortcuts) have no FullPath column and yield nothing."""
+    Other AmcacheParser CSVs (programs, drivers, shortcuts) have no FullPath column and yield nothing.
+
+    A hive copied while in use without its .LOG files (lab run01, Windows 11 24H2) gives rows
+    with an empty FullPath and Name: only KeyName ("curl.exe|110802663860b8e") and often SHA1
+    survive. Those rows keep the program name from KeyName, marked path_known=False."""
     for lineno, r in _rows(path):
         full = r.get("FullPath")
+        key_name = r.get("KeyName") or ""
+        name = r.get("Name") or (key_name.split("|")[0] if key_name else "")
         ts = _time(r.get("FileKeyLastWriteTimestamp") or r.get("FileIDLastWriteTimestamp"))
-        if not full or ts is None:
+        if not (full or name) or ts is None:
             continue
         yield _event("ez_amcache", EventSource.AMCACHE, Action.PROGRAM_PRESENT, ts, evidence_id, lineno,
-                     image=full, precision="s",
-                     attrs={"sha1": _amcache_sha1(r.get("SHA1")), "sha256": r.get("Sha256") or None,
-                            "name": r.get("Name") or None, "product": r.get("ProductName") or None,
+                     image=full or name, precision="s",
+                     attrs={"path_known": bool(full), "key_name": key_name or None,
+                            "sha1": _amcache_sha1(r.get("SHA1")), "sha256": r.get("Sha256") or None,
+                            "name": name or None, "product": r.get("ProductName") or None,
                             "publisher": r.get("Publisher") or None,
                             "program": r.get("ApplicationName") or r.get("ProgramName") or None,
                             "is_os_component": _bool(r.get("IsOsComponent")),

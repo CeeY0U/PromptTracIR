@@ -27,6 +27,7 @@ W = {
     "psreadline_match": 1.0,
 }
 DECISION_MARGIN = 1.5
+DEDUPE_WINDOW_S = 2.0      # Sysmon and Security 4688 records of one process creation
 
 
 def basename(path: str | None) -> str:
@@ -55,13 +56,23 @@ class ProcessIndex:
     @classmethod
     def build(cls, events: list[CanonicalEvent]) -> "ProcessIndex":
         idx = cls()
-        for e in events:
-            if e.action != Action.PROCESS_CREATE:
+        creates = [e for e in events if e.action == Action.PROCESS_CREATE]
+        sysmon_by_pid: dict[int, list[CanonicalEvent]] = {}
+        for e in creates:                      # Sysmon first: it has GUIDs and parent links
+            if e.source == EventSource.SYSMON:
+                idx.by_guid[e.process_guid or f"pid{e.pid}@{e.ts():.3f}"] = e
+                sysmon_by_pid.setdefault(e.pid, []).append(e)
+        for e in creates:
+            if e.source == EventSource.SYSMON:
+                continue
+            # a Security 4688 copy of a process Sysmon already saw: same PID and image, within
+            # DEDUPE_WINDOW_S (Sysmon rounds UtcTime to the millisecond, 4688 does not, so the
+            # 4688 copy can look newer and used to win find_by_pid, hiding the process tree)
+            if any(abs(s.ts() - e.ts()) <= DEDUPE_WINDOW_S and basename(s.image) == basename(e.image)
+                   for s in sysmon_by_pid.get(e.pid, [])):
                 continue
             guid = e.process_guid or f"pid{e.pid}@{e.ts():.3f}"   # 4688 has no GUID
-            if guid in idx.by_guid and e.source != EventSource.SYSMON:
-                continue   # Sysmon wins over 4688 for the same process
-            idx.by_guid[guid] = e
+            idx.by_guid.setdefault(guid, e)
         for guid, e in idx.by_guid.items():
             if e.parent_process_guid:
                 idx.children.setdefault(e.parent_process_guid, []).append(guid)

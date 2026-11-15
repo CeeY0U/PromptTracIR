@@ -1,0 +1,7 @@
+ApplicationName,ProgramId,FileKeyLastWriteTimestamp,SHA1,IsOsComponent,FullPath,Name,FileExtension,LinkDate,ProductName,Size,Version,ProductVersion,LongPathHash,BinaryType,IsPeFile,BinFileVersion,BinProductVersion,Usn,Language,Description,OriginalFileName,Publisher,Sha256,KeyName,AppxPackageFullName,AppxPackageRelativeId
+Unassociated,0000e0586ee7dceb8ceecb7801b14706d88700000904,2026-11-15 05:11:18,,False,,,,,,0,,,,,False,,,0,0,,,,,7za.exe|20a3741b59c746a7,,
+Unassociated,0000515c12a4da2ed75d3996fd25a42c4ebb0000ffff,2026-11-15 05:11:18,6120853f809da28d0dc133512ce320ec4e891f7b,False,,,,,,0,,,,,False,,,0,0,,,,,curl.exe|110802663860b8e,,
+Unassociated,0000f519feec486de87ed73cb92d3cac802400000000,2026-11-15 05:11:18,3670dba19ce66df90aab7162c29376c6a802558b,False,,,,,,0,,,,,False,,,0,0,,,,,curl.exe|7d5069349cd29a7c,,
+Unassociated,0006c1b92e094e0e0ec71e502355c58073a90000ffff,2026-11-15 05:58:25,c02ee1013bbb518f9d8b0f959068f084c40e8de0,False,,,,,,0,,,,,False,,,0,0,,,,,llama-server.exe|bf9ab9ee625ed784,,
+Unassociated,00061956d9ecd65fe229b03d665f8822228f00000000,2026-11-15 05:11:18,f0ef24bbb793b93c33274fadd7cba49fbda8a56e,False,,,,,,0,,,,,False,,,0,0,,,,,python.exe|42294ff09d54bf80,,
+Unassociated,0000ffffffffffffffffffffffffffffffff0000ffff,2026-11-15 05:11:18,,False,,,,,,0,,,,,False,,,0,0,,,,,,,
