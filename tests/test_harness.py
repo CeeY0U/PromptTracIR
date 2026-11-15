@@ -209,3 +209,42 @@ def test_label_claude_code_run(tmp_path):
     assert gt["malicious_tool_calls"] == ["tool_call:toolu_02"] and gt["first_deviation"] == "tool_call:toolu_02"
     assert gt["agent_runtime_pids"] == [6120] and gt["trace_format"] == "claude_code"
     assert gt["tool_process_links"] == {}          # no child PIDs in Claude Code transcripts
+
+
+def test_agent_runs_one_tool_call_per_turn(tmp_path):
+    # lab runs 01-04: the model sent its whole plan (fetch, shell, write) in its first response
+    f = tmp_path / "a.txt"
+    f.write_text("hello\n")
+    seen = []
+
+    class Model(BaseHTTPRequestHandler):
+        def do_POST(self):
+            req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            seen.append(req)
+            if len(seen) == 1:
+                calls = [("read_file", {"path": str(f)}), ("shell", {"command": "echo x"}),
+                         ("write_file", {"path": str(tmp_path / "n.md"), "content": ""})]
+                msg = {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": f"c{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}}
+                    for i, (n, a) in enumerate(calls)]}
+            else:
+                msg = {"role": "assistant", "content": "done"}
+            body = json.dumps({"choices": [{"message": msg}]}).encode()
+            self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    model = _serve(Model)
+    from harness.agent import run
+    out = tmp_path / "run"
+    run("go", f"http://127.0.0.1:{model.server_port}", "fake", out, temperature=0.7, seed=7)
+    model.shutdown()
+    recs = [json.loads(l) for l in (out / "trace.jsonl").read_text().splitlines()]
+    calls = [r for r in recs if r["type"] == "tool_call"]
+    assert [c["tool"] for c in calls] == ["read_file"] and calls[0]["dropped_parallel_calls"] == 2
+    assert not (tmp_path / "n.md").exists()
+    assert seen[0]["parallel_tool_calls"] is False and seen[0]["temperature"] == 0.7 and seen[0]["seed"] == 7
+    assert len(seen[1]["messages"][2]["tool_calls"]) == 1      # the model is shown only the call that ran
+    assert recs[0]["temperature"] == 0.7 and recs[0]["serial_tools"] is True

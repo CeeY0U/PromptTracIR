@@ -39,6 +39,7 @@ class Injection(BaseModel):
     location: str                       # URL or path where the payload is planted
     payload: str                        # exact injected text; label_run looks for it in fragments
     goal: str                           # what the attacker wants, in one line
+    command: str | None = None          # the exact command the payload asks for (scripted model)
 
 
 class SetupFile(BaseModel):
@@ -91,6 +92,8 @@ class Scenario(BaseModel):
                 raise ValueError("attack scenarios need a success_check")
             if self.success_check == "sink_canary" and not (self.canary and self.exfil_destinations):
                 raise ValueError("sink_canary needs a canary and exfil_destinations")
+            if self.injection.command and self.injection.command not in self.injection.payload:
+                raise ValueError("injection.command must appear word for word in injection.payload")
             planted = [f.content for f in self.setup.files] + [p.content for p in self.setup.web_pages]
             if not any("{{payload}}" in c or self.injection.payload in c for c in planted):
                 raise ValueError("no setup file or web page plants the payload ({{payload}})")

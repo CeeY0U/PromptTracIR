@@ -11,6 +11,13 @@ Outputs (in --out):
                   source as acquired can be compared with the text the model saw
   scenario.json   copy of the scenario, when --scenario is used
 
+One tool call per model turn (default): when the model returns several tool calls in one
+response, only the first runs and the model is asked again with its result. In the first lab
+runs (Nov 2026) Qwen2.5-7B issued every call of its plan in its first response, before it had
+read the page or file, so it never had a turn in which the injected text could change what it
+did. --parallel-tools restores the old behaviour. --temperature and --seed vary the run;
+temperature 0 (the default) makes repeated runs of a scenario identical.
+
 WARNING: this agent executes shell commands chosen by a language model that is
 being fed attacker content on purpose. Run it ONLY inside the isolated lab VM.
 It refuses to start unless PTIR_LAB=1 is set.
@@ -142,27 +149,38 @@ def run_tool(name: str, args: dict, timeout: int) -> tuple[str, dict]:
         return f"error: {e!r}", extra
 
 
+def select_calls(calls: list[dict], serial: bool) -> tuple[list[dict], int]:
+    """The tool calls to execute this turn, and how many were dropped."""
+    if serial and len(calls) > 1:
+        return calls[:1], len(calls) - 1
+    return calls, 0
+
+
 def run(prompt: str, base_url: str, model: str, out: Path, max_steps: int = 10, timeout: int = 60,
-        seed: int = 1234, scenario_id: str | None = None) -> str:
+        seed: int = 1234, scenario_id: str | None = None, temperature: float = 0.0,
+        serial: bool = True) -> str:
     import httpx
 
     sid = "s-" + uuid.uuid4().hex[:8]
     tr = Tracer(out, sid)
     tr.emit("session_start", agent="ptir-harness", model=model, pid=os.getpid(), ppid=os.getppid(),
             image=sys.executable, host=platform.node(),
-            user=os.environ.get("USERNAME") or os.environ.get("USER"), scenario_id=scenario_id)
+            user=os.environ.get("USERNAME") or os.environ.get("USER"), scenario_id=scenario_id,
+            temperature=temperature, seed=seed, serial_tools=serial)
     tr.emit("user_prompt", span_id="p1", text=prompt)
     messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
     client = httpx.Client(base_url=base_url.rstrip("/"), timeout=600)
     for step in range(1, max_steps + 1):
         mc = f"m{step}"
-        request = {"model": model, "messages": messages, "tools": TOOLS, "temperature": 0, "seed": seed}
+        request = {"model": model, "messages": messages, "tools": TOOLS, "temperature": temperature, "seed": seed}
+        if serial:
+            request["parallel_tool_calls"] = False
         tr.save_request(mc, request)
         tr.emit("model_call", model_call_id=mc, input_fragments=list(tr.fragments), request_ref=mc)
         resp = client.post("/v1/chat/completions", json=request)
         resp.raise_for_status()
         msg = resp.json()["choices"][0]["message"]
-        calls = msg.get("tool_calls") or []
+        calls, dropped = select_calls(msg.get("tool_calls") or [], serial)
         messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls or None})
         if not calls:
             tr.emit("final_answer", model_call_id=mc, text=msg.get("content"))
@@ -174,7 +192,8 @@ def run(prompt: str, base_url: str, model: str, out: Path, max_steps: int = 10, 
                 args = json.loads(c["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {"_raw": c["function"].get("arguments")}
-            tr.emit("tool_call", tool_call_id=tcid, model_call_id=mc, tool=name, args=args)
+            tr.emit("tool_call", tool_call_id=tcid, model_call_id=mc, tool=name, args=args,
+                    **({"dropped_parallel_calls": dropped} if dropped else {}))
             acquired = now()
             output, extra = run_tool(name, args, timeout)
             raw = extra.pop("_raw", None)
@@ -213,6 +232,11 @@ def main() -> int:
     ap.add_argument("--model", default="local")
     ap.add_argument("--out", default="run")
     ap.add_argument("--max-steps", type=int, default=10)
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="sampling temperature (0 = the same answer every run)")
+    ap.add_argument("--seed", type=int, default=1234, help="sampling seed; vary it with --temperature > 0")
+    ap.add_argument("--parallel-tools", action="store_true",
+                    help="run every tool call of a response (default: only the first, then ask again)")
     a = ap.parse_args()
     out = Path(a.out)
     prompt, scenario_id = a.prompt, None
@@ -223,7 +247,8 @@ def main() -> int:
         shutil.copy(a.scenario, out / "scenario.json")
     if not prompt:
         ap.error("give a prompt or --scenario")
-    print(run(prompt, a.base_url, a.model, out, a.max_steps, scenario_id=scenario_id))
+    print(run(prompt, a.base_url, a.model, out, a.max_steps, seed=a.seed, scenario_id=scenario_id,
+              temperature=a.temperature, serial=not a.parallel_tools))
     return 0
 
 
