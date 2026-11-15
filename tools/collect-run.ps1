@@ -10,8 +10,10 @@
                    * starts a full-packet capture with the built-in pktmon (skip with -NoCapture)
   -Phase Stop    after the agent and the paired human session have finished:
                    * stops the capture and converts it to pcapng
-                   * exports Sysmon / Security / PowerShell logs since the start (export-events.ps1)
-                   * copies SRUM, Prefetch, Amcache, registry hives, LNK files and Jump Lists
+                   * exports Sysmon / Security / PowerShell logs from boot (at most -LookbackMinutes
+                     before the start), so shells opened before Start are in the evidence
+                   * copies SRUM, Prefetch, Amcache, registry hives with their transaction logs,
+                     LNK files and Jump Lists
                    * optional: memory image (-WinPmem), KAPE triage incl. $MFT and $J (-Kape)
                    * writes evidence\collection.json (file -> evidence kind for `ptir add-run`)
                      and evidence\sha256sums.txt
@@ -20,7 +22,9 @@
   `ptir ingest` picks them up once a parser exists, so today's runs stay useful.
 
   Locked files (SRUDB.dat, Amcache.hve, NTUSER.DAT, UsrClass.dat) are copied with
-  `esentutl /y /vss`, which reads them from a volume shadow copy.
+  `esentutl /y /vss`, which reads them from a volume shadow copy. A hive in use is "dirty":
+  its latest changes are still in HIVE.LOG1 / HIVE.LOG2, so those are copied next to it
+  (RECmd, SBECmd and AmcacheParser replay them; without them the run's own activity is lost).
 
 .EXAMPLE
   .\tools\collect-run.ps1 -Phase Start -RunDir C:\lab\runs\run01
@@ -38,7 +42,8 @@ param(
   [string]$WinPmem,
   [string]$Kape,
   [switch]$NoCapture,
-  [switch]$NoMemory
+  [switch]$NoMemory,
+  [int]$LookbackMinutes = 360
 )
 $ErrorActionPreference = "Stop"
 
@@ -66,6 +71,14 @@ function Copy-Locked([string]$Source, [string]$DestDir) {
   if ($LASTEXITCODE -ne 0) { Warn "esentutl could not copy $Source (exit $LASTEXITCODE)" }
 }
 
+function Copy-Hive([string]$Source, [string]$DestDir) {
+  # the hive first, then its transaction logs, so the logs are at least as new as the hive
+  Copy-Locked $Source $DestDir
+  foreach ($ext in @(".LOG1", ".LOG2")) {
+    if (Test-Path -LiteralPath ($Source + $ext)) { Copy-Locked ($Source + $ext) $DestDir }
+  }
+}
+
 function Copy-Plain([string]$Pattern, [string]$DestDir) {
   $items = @(Get-ChildItem -Path $Pattern -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer })
   if ($items.Count -eq 0) { Warn "nothing matched: $Pattern"; return }
@@ -88,7 +101,11 @@ if ($Phase -eq "Start") {
     capture   = (-not $NoCapture)
   }
   if (-not $NoCapture) {
-    & pktmon.exe stop 2>$null | Out-Null          # clear any capture left running
+    # clear any capture left running. pktmon writes "not running" to stderr when there is
+    # none; under "Stop" Windows PowerShell 5.1 turns that into a terminating error.
+    $eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & pktmon.exe stop *> $null
+    $ErrorActionPreference = $eap
     & pktmon.exe start --capture --pkt-size 0 --file-name $Etl | Out-Null
     if ($LASTEXITCODE -ne 0) { Warn "pktmon failed to start (exit $LASTEXITCODE)"; $state.capture = $false }
   }
@@ -106,7 +123,13 @@ if ($startUtc -isnot [datetime]) {
   $startUtc = [datetime]::Parse($startUtc, [Globalization.CultureInfo]::InvariantCulture,
                                 [Globalization.DateTimeStyles]::RoundtripKind)
 }
-$since = $startUtc.ToLocalTime().AddSeconds(-5)
+# Events from boot, so processes that started before -Phase Start (the human's shell, the
+# agent's parent) have creation records. Capped at -LookbackMinutes before the start for a VM
+# that was resumed from a memory snapshot rather than booted.
+$boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+$since = $startUtc.ToLocalTime().AddMinutes(-$LookbackMinutes)
+if ($boot -gt $since) { $since = $boot }
+Write-Host ("Exporting events since {0:u} (boot {1:u})" -f $since.ToUniversalTime(), $boot.ToUniversalTime())
 $userHome = Join-Path $env:SystemDrive ("Users\" + $LabUser)
 
 # 1. network capture
@@ -127,7 +150,7 @@ Copy-Locked "$env:SystemRoot\System32\sru\SRUDB.dat" (Join-Path $Ev "srum")
 
 # 4. Prefetch and Amcache
 Copy-Plain "$env:SystemRoot\Prefetch\*.pf" (Join-Path $Ev "prefetch")
-Copy-Locked "$env:SystemRoot\appcompat\Programs\Amcache.hve" (Join-Path $Ev "amcache")
+Copy-Hive "$env:SystemRoot\appcompat\Programs\Amcache.hve" (Join-Path $Ev "amcache")
 
 # 5. registry: machine hives via reg save, user hives via shadow copy
 $reg = Join-Path $Ev "registry"
@@ -137,8 +160,8 @@ foreach ($h in @("SYSTEM", "SOFTWARE", "SAM")) {
   if ($LASTEXITCODE -ne 0) { Warn "reg save HKLM\$h failed" }
 }
 Copy-Item (Join-Path $reg "SOFTWARE") (Join-Path $Ev "srum\SOFTWARE") -ErrorAction SilentlyContinue
-Copy-Locked (Join-Path $userHome "NTUSER.DAT") $reg
-Copy-Locked (Join-Path $userHome "AppData\Local\Microsoft\Windows\UsrClass.dat") $reg
+Copy-Hive (Join-Path $userHome "NTUSER.DAT") $reg
+Copy-Hive (Join-Path $userHome "AppData\Local\Microsoft\Windows\UsrClass.dat") $reg
 
 # 6. LNK files and Jump Lists (human-activity signals for v0.4)
 $recent = Join-Path $userHome "AppData\Roaming\Microsoft\Windows\Recent"
@@ -174,6 +197,8 @@ function Get-Kind([string]$rel) {
     "*.evtx"                    { return "evtx_raw" }
     "consolehost_history.txt"   { return "psreadline" }
     "zeek\conn.log"             { return "zeek_conn" }
+    "zeek\dns.log"              { return "zeek_dns" }
+    "zeek\http.log"             { return "zeek_http" }
     "*.pcapng"                  { return "pcap" }
     "*.etl"                     { return "pcap" }
     "memory\*"                  { return "memory_image" }
@@ -202,6 +227,7 @@ $manifest = [ordered]@{
   host        = $env:COMPUTERNAME
   lab_user    = $LabUser
   start_utc   = $startUtc.ToUniversalTime().ToString("o")
+  events_since_utc = $since.ToUniversalTime().ToString("o")
   stop_utc    = (Get-Date).ToUniversalTime().ToString("o")
   warnings    = $script:Warnings
   files       = $files

@@ -84,6 +84,16 @@ def test_amcache_is_not_execution_time():
     assert "not execution time" in e.attrs["ts_meaning"]
 
 
+def test_amcache_rows_without_path_keep_the_program_name():
+    # lab run01: Amcache.hve copied in use without its .LOG files; FullPath and Name are empty
+    lab = Path(__file__).parent / "fixtures" / "lab" / "run01_Amcache_UnassociatedFileEntries.csv"
+    evs = list(ez.parse_amcache(lab, EID))
+    assert [e.image for e in evs] == ["7za.exe", "curl.exe", "curl.exe", "llama-server.exe", "python.exe"]
+    assert not any(e.attrs["path_known"] for e in evs)                     # row with no name dropped
+    assert evs[1].attrs["key_name"] == "curl.exe|110802663860b8e"
+    assert evs[1].attrs["sha1"] == "6120853f809da28d0dc133512ce320ec4e891f7b"
+
+
 # ---------------- network usage ----------------
 def test_srum_network_usage():
     evs = list(ez.parse_srum(FX / "20261029070100_SrumECmd_NetworkUsages_Output.csv", EID))

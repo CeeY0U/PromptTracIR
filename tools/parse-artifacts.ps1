@@ -20,9 +20,15 @@
   .\tools\parse-artifacts.ps1 -RunDir C:\lab\runs\run01 -EzTools C:\tools\ez -Vol "C:\tools\vol\vol.exe"
 
 .NOTES
-  Not yet run against a real lab VM (same status as collect-run.ps1); see docs/TESTING.md.
-  $MFT and $J are only present when collect-run.ps1 ran with -Kape, or were copied by hand into
-  RUN\evidence\ntfs\ ($MFT and $J). Get the EZ tools with Get-ZimmermanTools.ps1 (.NET 6 builds).
+  First run on the lab VM on 15 Nov 2026 (Windows 11 24H2, EZ Tools 2026.10, Volatility 2.28.2).
+  $MFT and $J come from a -Kape collection (taken from RUN\evidence\triage\kape\, zipped or not)
+  or are copied by hand into RUN\evidence\ntfs\. Get the EZ tools with Get-ZimmermanTools.ps1;
+  current builds need the .NET 10 runtime.
+  Registry hives in use are "dirty". collect-run.ps1 copies their .LOG1/.LOG2 files so the tools
+  can replay them; if RECmd or SBECmd still refuse a hive, it is re-run with --nl (logs ignored,
+  the run's latest user activity may be missing) and a warning says so.
+  Volatility's network plugins need the tcpip.pdb symbols as well as the kernel's: on an offline
+  VM, copy both from a machine that has downloaded them (docs/TESTING.md, Stage 3).
 #>
 param(
   [Parameter(Mandatory = $true)][string]$RunDir,
@@ -49,13 +55,48 @@ function Run-Ez([string]$tool, [string]$src, [string[]]$toolArgs, [string]$out =
   $exe = Find-Tool $tool
   if (-not $exe) { return }
   Write-Host "$tool $src"
+  $existing = @(Get-ChildItem -LiteralPath $out -Recurse -File -Filter *.csv -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.FullName })
   & $exe @toolArgs --csv $out | Out-Null
-  if ($LASTEXITCODE -ne 0) { Warn "$tool exited with $LASTEXITCODE" }
+  $code = $LASTEXITCODE
+  if ($code -ne 0 -and $NlRetry -contains $tool) {
+    # a dirty hive without usable transaction logs: process it as it is, and say so. The
+    # failed attempt's CSVs go first (its console log stays), so no row is ingested twice.
+    Get-ChildItem -LiteralPath $out -Recurse -File -Filter *.csv -ErrorAction SilentlyContinue |
+      Where-Object { $existing -notcontains $_.FullName } | Remove-Item -Force
+    & $exe @toolArgs --nl --csv $out | Out-Null
+    if ($LASTEXITCODE -eq 0) { Warn "${tool}: dirty hive without usable .LOG files, processed with --nl (latest changes may be missing)"; return }
+    $code = $LASTEXITCODE
+  }
+  if ($code -ne 0) { Warn "$tool exited with $code" }
 }
+$NlRetry = @("RECmd", "SBECmd")
 
 # NTFS ($J needs $MFT to resolve parent paths)
 $ntfs = Join-Path $Ev "ntfs"
 $mft = Join-Path $ntfs '$MFT'
+$kapeDir = Join-Path $Ev "triage\kape"
+if ((Test-Path $kapeDir) -and -not (Test-Path -LiteralPath $mft)) {
+  # take $MFT and $J from a -Kape collection: loose files, or inside KAPE's zip
+  New-Item -ItemType Directory -Force -Path $ntfs | Out-Null
+  $loose = @(Get-ChildItem -LiteralPath $kapeDir -Recurse -File -Force -ErrorAction SilentlyContinue |
+             Where-Object { $_.Name -eq '$MFT' -or $_.Name -eq '$J' })
+  foreach ($f in $loose) { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $ntfs $f.Name) -Force }
+  if (-not $loose) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    foreach ($z in @(Get-ChildItem -LiteralPath $kapeDir -Recurse -Filter *.zip -ErrorAction SilentlyContinue)) {
+      $zip = [IO.Compression.ZipFile]::OpenRead($z.FullName)
+      try {
+        foreach ($entry in $zip.Entries) {
+          if ($entry.Name -eq '$MFT' -or $entry.Name -eq '$J') {
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $ntfs $entry.Name), $true)
+          }
+        }
+      } finally { $zip.Dispose() }
+    }
+  }
+  if (-not (Test-Path -LiteralPath $mft)) { Warn "no `$MFT found in the KAPE output under $kapeDir" }
+}
 $usn = Get-ChildItem -Path $ntfs -Filter '*$J' -ErrorAction SilentlyContinue | Select-Object -First 1
 Run-Ez "MFTECmd" $mft @("-f", $mft)
 if ($usn) {
@@ -90,6 +131,14 @@ if ($Vol -and $mem) {
     Write-Host "volatility $($p[0])"
     $json = & $Vol -q -r json -f $mem.FullName $p[0]
     if ($LASTEXITCODE -ne 0) { Warn "volatility $($p[0]) exited with $LASTEXITCODE"; continue }
+    if ($p[0] -eq "windows.netscan" -and -not (($json -join "") -match '"PID"')) {
+      # netscan finds nothing on Windows 11 24H2 with Volatility 2.28; netstat has the same columns
+      Write-Host "volatility windows.netstat (netscan found no sockets)"
+      $json = & $Vol -q -r json -f $mem.FullName "windows.netstat"
+      if (-not (($json -join "") -match '"PID"')) {
+        Warn "volatility found no sockets with netscan or netstat: usually missing tcpip.pdb symbols on an offline VM"
+      } else { Warn "vol_netscan.json comes from windows.netstat (netscan found no sockets)" }
+    }
     [IO.File]::WriteAllLines((Join-Path $VolOut $p[1]), [string[]]$json, (New-Object Text.UTF8Encoding($false)))
   }
 } elseif (-not $mem) { Warn "no memory image under evidence\memory, Volatility skipped" }
