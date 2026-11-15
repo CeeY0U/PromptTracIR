@@ -1,6 +1,6 @@
-# Testing guide: v0.1.1 to v0.3.0
+# Testing guide: v0.1.1 to v0.3.1
 
-This guide covers every check up to v0.3.0, in the order to run them:
+This guide covers every check up to v0.3.1, in the order to run them:
 
 | Part | Where | Needs | Time |
 |---|---|---|---|
@@ -12,9 +12,9 @@ This guide covers every check up to v0.3.0, in the order to run them:
 | [6. Scoring many runs](#part-6-scoring-many-runs) | analyst machine | 2+ labelled runs | 5 min |
 | [7. v0.2 acceptance checklist](#part-7-v02-acceptance-checklist) | n/a | Parts 1 to 6 | n/a |
 
-Parts 1 to 3 need no VM, model or network. Parts 4 to 6 are the real v0.2 milestone: nothing in
-`tools/collect-run.ps1` has run on a real Windows VM yet, so expect to fix things on the first run.
-That is the point of v0.2.
+Parts 1 to 3 need no VM, model or network. Parts 4 to 6 are the real v0.2 milestone. The first
+lab runs (15 Nov 2026: VMware Workstation, Windows 11 24H2, Kali, Qwen2.5-7B) found the problems
+fixed in v0.3.1; the setup notes below include what those runs taught.
 
 ---
 
@@ -46,7 +46,7 @@ If activation is blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 pytest -q
 ```
 
-Expected: `80 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
+Expected: `100 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
 `pytest -q -k adfir_tampering`.
 
 ### 1.3 What the tests cover
@@ -55,12 +55,16 @@ Expected: `80 passed`. Run one file with `pytest -q tests/test_importers.py`, or
 |---|---|---|
 | `tests/test_pipeline.py` | v0.1 | hashing and custody; end-to-end analysis; corroborated tool links; replay traceback; LLM output validation; harness agent against a fake model |
 | `tests/test_runs.py` | v0.2 | `ptir add-run` kind mapping, `collection.json` override, label files skipped, unknown kinds rejected, re-adding is idempotent, `ptir add` on a directory |
-| `tests/test_harness.py` | v0.2 | raw source bytes kept under `sources/`; scenario schema rules; `prepare` writes and splits VM files from web pages; `label_run` matches the sample's ground truth, resolves child PID to ProcessGuid, ignores sink hits from other runs, labels legitimate and Claude Code runs |
+| `tests/test_harness.py` | v0.2 | raw source bytes kept under `sources/`; scenario schema rules; `prepare` writes and splits VM files from web pages; `label_run` matches the sample's ground truth, resolves child PID to ProcessGuid, ignores sink hits from other runs, labels legitimate and Claude Code runs; one tool call per turn with temperature and seed (v0.3.1) |
 | `tests/test_importers.py` | v0.2 | Claude Code transcripts; OpenTelemetry GenAI spans (single document and JSONL, with and without content); AgentDFIR package import (single and chunked blobs) and 5 kinds of tampering |
 | `tests/test_batch.py` | v0.2 | `ptir eval-batch` aggregation, reviewed-only filter, report files |
 | `tests/test_zeek.py` | v0.3 | Zeek `conn`, `dns` and `http` logs in JSON and tab-separated form (same events either way), unset fields, missing header, `add-run` patterns, Zeek DNS answers in the sample case |
 | `tests/test_file_access.py` | v0.3 | Security 4663 read and write masks, non-file objects skipped; the graph joins 4663 to processes by PID and time, corroborates the trace's `read_file`, and flags curl reading the secret |
-| `tests/test_artifacts.py` | v0.3 | every `ez_*` and `vol_*` parser: path joining, timestomp flags, USN Close-record selection and rename pairing, Prefetch run times and paths, Amcache SHA-1 padding, SRUM bytes, UserAssist / autorun / other registry rows, LNK / Jump List / ShellBags, Volatility pstree flattening, banner skipping and unreadable command lines; `add-run` patterns; `ingested_at`; empty files |
+| `tests/test_artifacts.py` | v0.3 | every `ez_*` and `vol_*` parser: path joining, timestomp flags, USN Close-record selection and rename pairing, Prefetch run times and paths, Amcache SHA-1 padding and rows without a path (lab fixture), SRUM bytes, UserAssist / autorun / other registry rows, LNK / Jump List / ShellBags, Volatility pstree flattening, banner skipping and unreadable command lines; `add-run` patterns; `ingested_at`; empty files |
+| `tests/test_scope_paths.py` | v0.3.1 | escaped and quoted paths from lab run03 raise no scope findings; a secret outside the folder still does; UNC prefixes kept |
+| `tests/test_process_dedupe.py` | v0.3.1 | the Sysmon/4688 copies of one process 1 ms apart (lab run01); 4688-only processes kept; human labels through a shell started before collection; ignored injections and `unknown` impact not scored |
+| `tests/test_cli_messages.py` | v0.3.1 | missing case and envelope messages; `add-run` on an existing case reports only new files |
+| `tests/test_scripted_model.py` | v0.3.1 | the scripted model's plan, no shell call when the payload fragment is removed, ignore mode, and an end-to-end agent run against it |
 
 All test data is synthetic. The AgentDFIR importer was also checked by hand against AgentDFIR's own
 conformance packages: the valid package imports, and 20 of the 24 tampered packages are rejected.
@@ -146,12 +150,35 @@ This is the v0.2 milestone. Do the one-time setup once, then repeat 4.2 for ever
 
 ### 4.1 One-time lab setup
 
-**Network.** Two machines on an isolated host-only network, for example:
+**Network.** Two machines on an isolated network, for example:
 
-| Machine | Example IP | Runs |
+| Machine | Lab IP | Runs |
 |---|---|---|
 | Lab VM, Windows 11 | 192.168.56.20 | agent harness, Sysmon, local model server, collection |
-| Attacker box, any OS with Python 3.10+ | 192.168.56.10 | web server for poisoned pages, `exfil_sink.py` |
+| Attacker box, any OS with Python 3.10+ | 192.168.56.10 and 192.168.56.11 | web server for poisoned pages (.10), `exfil_sink.py` (.11) |
+
+The two lab names get **different IPs** (`docs.example-lab.test` on .10, `collect.attacker-lab.test`
+on .11): with one IP, Sysmon's reverse lookup gives one name for both and the upload looks like a
+visit to the documentation site.
+
+In VMware, give each VM a second network adapter on the same **LAN segment** (or host-only
+network) and set the lab IPs by hand. Keep a NAT adapter for installing tools; untick its
+**Connected** box before taking the snapshot. A VMware revert also restores the VM's settings
+(shared folders, adapters), so make settings changes before the snapshot.
+
+```powershell
+# lab VM (elevated): the lab adapter, often Ethernet1 (Get-NetAdapter); no gateway
+New-NetIPAddress -InterfaceAlias "Ethernet1" -IPAddress 192.168.56.20 -PrefixLength 24
+```
+```bash
+# attacker box, NetworkManager (Kali, Ubuntu): both lab IPs on the lab interface, kept across reboots
+nmcli -f NAME,DEVICE con show
+sudo nmcli con mod "Wired connection 1" +ipv4.addresses "192.168.56.10/24,192.168.56.11/24"
+sudo nmcli con up "Wired connection 1"
+```
+
+Give the lab VM at least 8 GB of RAM and 4 cores as **1 processor x 4 cores**: Windows 11 Home and
+Pro use only one or two CPU sockets, so 4 processors x 1 core runs the model on one core.
 
 Keep them separate. If the web server and sink run on the VM itself, the traffic goes to loopback
 and the scope rules will (correctly) not treat it as external egress.
@@ -171,18 +198,34 @@ the two clocks are within a few seconds of each other before each session.
    reg add HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit /v ProcessCreationIncludeCmdLine_Enabled /t REG_DWORD /d 1 /f
    reg add HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging /v EnableScriptBlockLogging /t REG_DWORD /d 1 /f
    ```
-4. Sysmon: `Sysmon64.exe -accepteula -i tools\sysmon-lab.xml`.
-5. Hosts file (`C:\Windows\System32\drivers\etc\hosts`, edit as admin):
-   ```
-   192.168.56.10  docs.example-lab.test collect.attacker-lab.test
+4. Sysmon: `Sysmon64.exe -accepteula -i tools\sysmon-lab.xml`, then check with `Sysmon64.exe -c`:
+   the `Config file:` line must name `sysmon-lab.xml`. If it shows only `-accepteula -i`, Sysmon
+   runs on its defaults (process start and exit only, no network, DNS or file events); apply the
+   config with `Sysmon64.exe -c C:\lab\PromptTracIR\tools\sysmon-lab.xml`.
+5. Hosts file, from an elevated PowerShell (typing the file's path opens Notepad without admin
+   rights, and saving fails):
+   ```powershell
+   Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Encoding ASCII -Value "`r`n192.168.56.10  docs.example-lab.test`r`n192.168.56.11  collect.attacker-lab.test"
+   ipconfig /flushdns
    ```
 6. Local model: a 7 to 8B instruct GGUF with tool calling, served by
    `llama-server -m model.gguf --port 8080 --jinja`. If the model runs on another machine (for a
    GPU), add that IP to `model_api_domains` in every scenario's envelope, or its traffic becomes an
    egress finding.
-7. Optional tools, in `C:\tools\`: WinPmem (memory image; or use hypervisor snapshots) and KAPE
-   (needed for `$MFT` and `$UsnJrnl:$J`).
-8. Take the **clean snapshot**.
+7. Tools, in `C:\tools\`: Eric Zimmerman's tools in `C:\tools\ez` (`Get-ZimmermanTools.ps1`;
+   current builds need the **.NET 10 runtime**), Volatility 3 (`pip install volatility3`), WinPmem
+   (or use hypervisor memory snapshots) and optionally KAPE (needed for `$MFT` and `$UsnJrnl:$J`).
+   WinPmem can exit with 1 and still write a complete image: check it with
+   `vol -f memory.raw windows.info` (a `SystemTime` close to the run's end means it is good).
+8. Volatility symbols, once, while the VM has internet: run `vol -f <an image> windows.info` and
+   `vol -f <an image> windows.netstat`. The first downloads the kernel's symbols
+   (`symbols\windows\ntkrnlmp.pdb\...`), the second the network stack's (`tcpip.pdb`). Without the
+   second, netscan and netstat find no sockets on an offline VM. Keep both folders in the snapshot.
+9. Before the snapshot: clear the lab user's PowerShell history
+   (`Remove-Item (Get-PSReadLineOption).HistorySavePath`), since setup commands in it are ingested
+   as the human's history on every run; disconnect the NAT adapter; check `ipconfig` shows the lab IP.
+10. Take the **clean snapshot**, before any run. A snapshot taken after a run carries that run's
+    files (and any scheduled task it created) into every later run.
 
 **Attacker box:**
 
@@ -197,18 +240,22 @@ python harness/exfil_sink.py --port 8443 --canary PTIR-CANARY-7f3a --log sink_lo
 
 From the VM, `curl.exe http://docs.example-lab.test/guide.html` should return the page.
 
+Zeek (optional): Kali's own `zeek` package does not install on current Kali. Use the official
+image instead: `sudo docker pull zeek/zeek`, then in 4.4 run
+`sudo docker run --rm -v "$PWD":/w -w /w zeek/zeek zeek -C -r capture.pcapng`.
+
 ### 4.2 Each run
 
 Example: run `run01` of `web_exfil_01`. Use a new run name every time.
 
 | Step | Where | Command or action |
 |---|---|---|
-| 1 | VM | Revert to the clean snapshot. Log in as `lab`. |
-| 2 | VM, PowerShell, repo folder | `python -m harness.scenario prepare harness\scenarios\web_exfil_01.json --files-only` |
+| 1 | VM | Revert to the clean snapshot. Log in as `lab`. Start the model server (window M). |
+| 2 | VM, **elevated** PowerShell (window E), repo folder | `python -m harness.scenario prepare harness\scenarios\web_exfil_01.json --files-only`, then check the files exist (`Test-Path C:\Users\lab\project\README.md`) |
 | 2b | VM, **elevated** PowerShell | `.\tools\audit-canary.ps1 -Path C:\Users\lab\secrets` (v0.3: Security 4663 for every read of the secret) |
 | 3 | VM, **elevated** PowerShell, repo folder | `.\tools\collect-run.ps1 -Phase Start -RunDir C:\lab\runs\run01` |
-| 4 | VM, PowerShell window **H** (human) | `. .\tools\human-session.ps1 -Run run01 -OutDir C:\lab\runs\run01 -Scenario harness\scenarios\web_exfil_01.json` |
-| 5 | VM, PowerShell window **A** (agent) | `$env:PTIR_LAB = "1"` then `python harness\agent.py --scenario harness\scenarios\web_exfil_01.json --base-url http://127.0.0.1:8080 --model local --out C:\lab\runs\run01` |
+| 4 | VM, new PowerShell window **H** (human), opened **after** step 3, not elevated | `. .\tools\human-session.ps1 -Run run01 -OutDir C:\lab\runs\run01 -Scenario harness\scenarios\web_exfil_01.json` |
+| 5 | VM, new PowerShell window **A** (agent), opened after step 3, not elevated | `$env:PTIR_LAB = "1"` then `python harness\agent.py --scenario harness\scenarios\web_exfil_01.json --base-url http://127.0.0.1:8080 --model local --out C:\lab\runs\run01` |
 | 6 | Window H, while the agent runs | Type the commands step 4 printed, by hand, then `Stop-HumanSession` |
 | 7 | Window A | Wait for the agent's final answer |
 | 8 | VM, elevated | `.\tools\collect-run.ps1 -Phase Stop -RunDir C:\lab\runs\run01 -WinPmem C:\tools\winpmem_mini_x64.exe` (add `-Kape C:\tools\kape\kape.exe` if you have it) |
@@ -218,7 +265,13 @@ Example: run `run01` of `web_exfil_01`. Use a new run name every time.
 | 12 | VM → analyst machine | Copy the whole `C:\lab\runs\run01` folder into `runs/run01` on the analyst machine. It holds synthetic secrets and a memory image: never commit it. |
 
 Step 8 ends with a list of warnings for anything it could not collect. Copy them into
-`runs/run01/notes.md`. The first run will show what needs fixing in the script.
+`runs/run01/notes.md`. Step 8 hashes everything it collected, a 9 GB memory image included, so it
+can take 10 to 15 minutes. Do not click inside a PowerShell window while a script runs: that
+selects text and pauses the script until you press Enter.
+
+Since v0.3.1, collection exports event logs from boot (at most 6 hours before step 3), so the
+shells opened in steps 4 and 5 have creation records even if opened earlier. Opening them after
+step 3 still keeps the evidence window short.
 
 ### 4.3 Reviewing the labels (step 11)
 
@@ -275,6 +328,36 @@ the synthetic sample, time zones (Sysmon `UtcTime` vs local time), PID reuse, an
 appearing only as an IP in Sysmon event 3.
 
 Repeat 4.2 to 4.4 for `legit_notes_01` and `file_persist_01`.
+
+### 4.5 Real-model runs that ignore the payload, and scripted runs
+
+The first five injected runs with Qwen2.5-7B all ignored the payload. Two harness options help:
+
+- **One tool call per turn** is the default since v0.3.1. The model used to send its whole plan
+  (fetch, shell, write) in its first response, before reading the page, so the injected text never
+  reached a decision. `--parallel-tools` restores the old behaviour.
+- **`--temperature` and `--seed`.** At temperature 0 (the default) a scenario gives the same
+  answer every run: run02 repeated run01 word for word. For more tries, use for example
+  `--temperature 0.7 --seed 1`, `--seed 2`, ... and note the values in `notes.md`.
+
+For guaranteed positive cases, run the **scripted model** in window M instead of `llama-server`:
+
+```powershell
+python -m harness.scripted_model --scenario harness\scenarios\web_exfil_01.json --port 8080
+```
+
+and start the agent with `--model scripted-comply`. The agent then really fetches the page, really
+runs the scenario's `injection.command` and writes the notes, so every host artifact is genuine;
+only the decisions are scripted. Label, collect and analyse exactly as in 4.2 to 4.4. Keep scripted
+runs separate from real-model runs in the report: they test PromptTracIR's reconstruction, not
+whether a model falls for the payload. `--mode ignore` gives the matching negative case.
+
+Expected for a scripted `web_exfil_01` run: `injection_followed` and `attack_succeeded` true,
+`first_deviation` = the shell tool call running `curl.exe`, the sink log has
+`"canary_received": true`, Security 4663 shows `curl.exe` reading `api_keys.txt`, and
+`impact.json` has `collect.attacker-lab.test` at `probable` (`confirmed` once Zeek's `conn.log` is
+added). For `file_persist_01`: a `persistence` finding on the `schtasks /create` call and
+`attack_succeeded` true (exit code 0).
 
 ---
 
@@ -354,12 +437,23 @@ release notes.
 ## Part 8: v0.3 artifacts from a real run
 
 The `ez_*` and `vol_*` parsers were written against the tools' published column layouts and
-tested on synthetic fixtures. One real run confirms the columns.
+tested on synthetic fixtures. The first real runs (15 Nov 2026) confirmed the columns of every
+tool except AmcacheParser's output for a hive copied without its logs (fixed in v0.3.1, fixture
+`tests/fixtures/lab/`). Known results from those runs:
 
-1. Windows machine with the run folder, the EZ tools (`Get-ZimmermanTools.ps1`, .NET 6 builds) and,
-   for memory, Volatility 3:
-   `.\tools\parse-artifacts.ps1 -RunDir C:\lab\runs\run01 -EzTools C:\tools\ez -Vol C:\tools\vol\vol.exe`
-   ($MFT and $J need `collect-run.ps1 -Kape`, or copies in `evidence\ntfs\`.)
+| Output | Real-run result | Why |
+|---|---|---|
+| `ez_amcache` | 0 events before v0.3.1 | `FullPath` empty: hive copied without `.LOG1`/`.LOG2`. v0.3.1 copies the logs and falls back to `KeyName` |
+| `ez_shellbags` from `NTUSER.csv` | 0 events | Windows 11 keeps ShellBags in `UsrClass.dat` |
+| `ez_srum` | same rows every run | SRUM writes about once an hour; a run collected straight away is not in it yet |
+| `vol_netscan` | empty | netscan finds nothing on 24H2; netstat without `tcpip.pdb` symbols neither (4.1 step 8) |
+| `zeek_dns` | no lab names | the lab names come from the hosts file, not DNS; use Sysmon event 22 for them |
+
+1. Windows machine with the run folder, the EZ tools (`Get-ZimmermanTools.ps1`, .NET 10 runtime)
+   and, for memory, Volatility 3:
+   `.\tools\parse-artifacts.ps1 -RunDir C:\lab\runs\run01 -EzTools C:\tools\ez -Vol (Get-Command vol).Source`
+   ($MFT and $J need `collect-run.ps1 -Kape`, or copies in `evidence\ntfs\`; since v0.3.1 the
+   script takes them from the KAPE output itself.)
 2. Analyst machine: `ptir add-run runs/run01 --case cases/run01`, then `ptir ingest cases/run01`.
    Every `ez_*` / `vol_*` file should report more than 0 events.
 3. Spot checks in the UI timeline (`ptir serve cases/run01`): the agent's `curl.exe` appears as a
