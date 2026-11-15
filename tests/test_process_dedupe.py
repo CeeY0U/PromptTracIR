@@ -124,3 +124,15 @@ def test_parse_time_any_fraction_length():
               "2026-11-15T07:09:00.5000000+00:00", "2026-11-15T07:09:00.500"):
         assert parse_time(s) == want, s
     assert parse_time("2026-11-15T07:09:00Z").microsecond == 0
+
+
+def test_v04_merges_the_4688_copy_into_the_sysmon_record():
+    # v0.4 keeps the 4688 record as corroboration instead of dropping it
+    from prompttracir import config as config_mod
+    idx = ProcessIndex.build(_run01_events())
+    assert idx.seen_by[AGENT_GUID] == ["sysmon", "security_4688"]
+    assert idx.corroborating[AGENT_GUID] == ["security:x:2"]
+    # the window is a setting: at 0 s the 1 ms apart copies are two processes again
+    cfg = config_mod.load(override={"process": {"dedupe_window_s": 0.0}})
+    loose = ProcessIndex.build(_run01_events(), cfg)
+    assert any(k.startswith("pid4020@") for k in loose.by_guid)

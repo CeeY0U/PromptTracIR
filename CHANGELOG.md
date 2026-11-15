@@ -2,6 +2,42 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.4.0] - 2026-11-16
+
+Attribution engine (roadmap v0.4), on top of the v0.3.1 lab fixes. Tested on synthetic cases built
+from the sample and on the process records of lab run01; the weights are still the untuned defaults
+until they are tuned on real training runs.
+
+### Added
+- Settings file: `prompttracir/config.py`, `ptir config`, `ptir analyze --config FILE`;
+  `configs/attribution-defaults.json` and `configs/README.md` (tuning procedure). Each analysis
+  writes the settings used and their fingerprint to `output/config.json`.
+- Per-session trace-to-host clock offset, estimated from child PIDs; configurable drift windows
+  otherwise. `output/correlation.json` records it, and how each session's runtime was found.
+- Security 4688 builds the process tree when Sysmon is missing; a 4688 that matches a Sysmon
+  event (same PID and image within `process.dedupe_window_s`) is merged into it (`seen_by`). This
+  replaces the v0.3.1 de-duplication with a configurable one; the lab run01 timing (4688 1 ms after
+  Sysmon) is a regression test. PowerShell 4104 script blocks count as command evidence
+  when linking a tool call.
+- Runtime identification for traces with no runtime PID (Claude Code), marked inferred.
+- Human-side signals: UserAssist, LNK / Jump List file opens, ShellBags, started outside every
+  agent session; non-interactive logon types (4624) discount human signals.
+- `agent_probability`, weighted `contributions` and `seen_by` on every attribution.
+- Ablations: `ptir analyze --without KIND [--tag NAME]` into `output/<tag>/`.
+- `eval-batch`: attribution and tool-link calibration (ECE, Brier), attribution on
+  complete-evidence runs, `--families` / `--exclude-families`, and `--reanalyze` / `--config` /
+  `--without` / `--tag` re-analysis.
+- Tests: `tests/test_attribution.py`, `tests/test_calibration.py`, more in `tests/test_batch.py`, and
+  the lab run01 merge test in `tests/test_process_dedupe.py` (101 -> 121 tests).
+
+### Changed
+- `correlate.W` and `DECISION_MARGIN` are now read from the settings (the names remain as
+  aliases of the defaults).
+- `analyze` returns the label counts, the settings fingerprint and any ablation.
+- Processes started before or after every agent session gain a weak human signal, so
+  `explorer.exe` and terminals in the sample score slightly higher on the human side; labels in
+  the sample are unchanged.
+
 ## [0.3.1] - 2026-11-16
 
 Fixes from the first real lab runs (15 Nov 2026: Windows 11 24H2 VM, Kali attacker box,
