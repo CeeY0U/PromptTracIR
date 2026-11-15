@@ -8,6 +8,9 @@ Fixes from the first real lab runs (15 Nov 2026: Windows 11 24H2 VM, Kali attack
 Qwen2.5-7B through llama-server, runs run01 to run04 and a teammate's batch).
 
 ### Fixed
+- Timestamps whose fraction is not 3 or 6 digits long (`07:09:00.5`) failed to parse on
+  Python 3.10, which CI tests on: `parse_time`, `label_run.py` and the run window in `eval`
+  now pad or cut the fraction to 6 digits.
 - `collect-run.ps1 -Phase Start` stopped before starting the capture on Windows PowerShell 5.1:
   `pktmon stop` with nothing running writes to stderr, which "Stop" turned into a terminating error.
 - Registry hives in use (`NTUSER.DAT`, `UsrClass.dat`, `Amcache.hve`) were copied without their
@@ -54,7 +57,7 @@ Qwen2.5-7B through llama-server, runs run01 to run04 and a teammate's batch).
   sockets, Sysmon config check, hosts file, .NET 10, Volatility symbols, Zeek through Docker,
   snapshot hygiene, window order), a scripted-run section and the real-run results per artifact.
 - Tests: `test_scope_paths.py`, `test_process_dedupe.py`, `test_cli_messages.py`,
-  `test_scripted_model.py`, an Amcache lab fixture and a serial tool-call test (80 -> 100 tests).
+  `test_scripted_model.py`, an Amcache lab fixture and a serial tool-call test (80 -> 101 tests).
 
 ## [0.3.0] - 2026-11-14
 

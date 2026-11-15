@@ -6,11 +6,12 @@
 * The human's shell started before collection, so it has no creation record of its own.
 * Ignored injections and "unknown" exfiltration labels were scored as wrong answers.
 """
-from datetime import datetime, timezone
+from datetime import datetime
 
 from prompttracir.batch import aggregate
 from prompttracir.correlate import ProcessIndex
 from prompttracir.evaluate import _labels_from_pids, evaluate_case
+from prompttracir.parsers import parse_time
 from prompttracir.schema import Action, CanonicalEvent, EventSource, RawRef
 
 AGENT_GUID, CMD_GUID = "80d540c8-5a13-6af9-3101-000000001000", "80d540c8-5a31-6af9-3a01-000000001000"
@@ -19,7 +20,7 @@ PY = "C:\\Users\\lab\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
 
 
 def _t(s: str) -> datetime:
-    return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+    return parse_time(s)
 
 
 def _create(n, source, ts, pid, image, guid=None, ppid=None, pguid=None, parent_image=None):
@@ -114,3 +115,12 @@ def test_followed_injection_is_still_scored():
                        "impact.json": [{"destination": "collect.attacker-lab.test", "level": "probable"}]})
     assert r["injected_fragment_localization"]["f1"] == 1.0
     assert aggregate([r])["impact_accuracy"] == 0.0
+
+
+def test_parse_time_any_fraction_length():
+    # Python 3.10 fromisoformat rejects fractions that are not 3 or 6 digits long.
+    want = datetime(2026, 11, 15, 7, 9, 0, 500000, tzinfo=parse_time("2026-11-15T07:09:00Z").tzinfo)
+    for s in ("2026-11-15T07:09:00.5", "2026-11-15T07:09:00.50Z", "2026-11-15 07:09:00.50000",
+              "2026-11-15T07:09:00.5000000+00:00", "2026-11-15T07:09:00.500"):
+        assert parse_time(s) == want, s
+    assert parse_time("2026-11-15T07:09:00Z").microsecond == 0

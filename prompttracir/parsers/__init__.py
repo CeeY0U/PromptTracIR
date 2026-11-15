@@ -55,7 +55,12 @@ PRESERVE_ONLY = {
 
 KNOWN_KINDS = set(PARSERS) | set(PRESERVE_ONLY)
 
-_FRAC = re.compile(r"(\.\d{6})\d+")
+_FRAC = re.compile(r"\.(\d+)")
+
+
+def _six_digits(m: "re.Match[str]") -> str:
+    # Python 3.10 fromisoformat takes only 3 or 6 fractional digits: pad or cut to 6.
+    return "." + (m.group(1) + "000000")[:6]
 
 
 def parse_time(value: str) -> datetime:
@@ -63,7 +68,7 @@ def parse_time(value: str) -> datetime:
     if isinstance(value, (int, float)):
         return datetime.fromtimestamp(float(value), tz=timezone.utc)
     s = str(value).strip().replace("Z", "+00:00")
-    s = _FRAC.sub(r"\1", s)
+    s = _FRAC.sub(_six_digits, s, count=1)
     if " " in s and "T" not in s:
         s = s.replace(" ", "T", 1)
     dt = datetime.fromisoformat(s)

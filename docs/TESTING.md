@@ -46,7 +46,7 @@ If activation is blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 pytest -q
 ```
 
-Expected: `100 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
+Expected: `101 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
 `pytest -q -k adfir_tampering`.
 
 ### 1.3 What the tests cover

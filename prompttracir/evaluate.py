@@ -95,11 +95,11 @@ def _labels_from_pids(case: Case, gt: dict) -> dict[str, str]:
 
 
 def _run_window(gt: dict) -> tuple[float, float] | None:
-    from datetime import datetime
+    from .parsers import parse_time
     w = gt.get("run_window") or {}
     try:
-        lo = datetime.fromisoformat(w["start"].replace("Z", "+00:00")).timestamp()
-        hi = datetime.fromisoformat(w["end"].replace("Z", "+00:00")).timestamp()
+        lo = parse_time(w["start"]).timestamp()
+        hi = parse_time(w["end"]).timestamp()
     except (KeyError, TypeError, ValueError):
         return None
     return lo - ORPHAN_MARGIN_S, hi + ORPHAN_MARGIN_S

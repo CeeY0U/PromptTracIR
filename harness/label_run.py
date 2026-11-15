@@ -42,7 +42,8 @@ EXEC_TOOLS = {"shell", "run", "exec", "bash", "powershell", "cmd", "terminal", "
 
 def _ts(s: str) -> datetime:
     s = s.strip().replace("Z", "+00:00")
-    s = re.sub(r"(\.\d{6})\d+", r"\1", s)
+    # Python 3.10 fromisoformat takes only 3 or 6 fractional digits: pad or cut to 6.
+    s = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], s, count=1)
     if " " in s and "T" not in s:
         s = s.replace(" ", "T", 1)
     dt = datetime.fromisoformat(s)
