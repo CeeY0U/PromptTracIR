@@ -2,6 +2,21 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.4.1] - 2026-11-16
+
+Fix from the first v0.4.0 lab run (`jt-01-exfil-scripted`, scripted model).
+
+### Fixed
+- `ptir analyze` stopped with `KeyError: 'node'` on agent traces whose records share a
+  timestamp. The scripted model answers within one clock tick, so a model call and the fragments
+  it reads had the same time; trace events are ordered by event ID within a timestamp, and the
+  harness trace parser numbered them without zero padding (`10` sorted before `7`), so the model
+  call came before its fragments. Trace event IDs are now zero-padded like every other parser's,
+  the graph accepts a node whose edges arrived first, and edges to nodes the evidence never
+  defines are dropped instead of breaking the graph. Cases ingested with v0.4.0 must be ingested
+  again (`ptir add-run` into a fresh `case/`).
+- Tests: `tests/test_trace_order.py` (121 -> 124 tests).
+
 ## [0.4.0] - 2026-11-16
 
 Attribution engine (roadmap v0.4), on top of the v0.3.1 lab fixes. Tested on synthetic cases built

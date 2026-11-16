@@ -13,11 +13,12 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.4.0 (16 Nov 2026). The full pipeline has run on real lab evidence (five runs on a
+> Status: v0.4.1 (16 Nov 2026). The full pipeline has run on real lab evidence (five runs on a
 > Windows 11 24H2 VM, Nov 2026), v0.3.1 fixed what those runs exposed, and v0.4.0 adds the
 > attribution engine: a settings file, clock-offset estimation, 4688 / 4104 coverage, human-side
 > signals from UserAssist, LNK, ShellBags and logon types, Claude Code runtime inference,
-> calibrated P(agent) and ablations. The weights are still the defaults until they are tuned on
+> calibrated P(agent) and ablations; v0.4.1 fixes trace ordering found in the first v0.4.0 lab run.
+> The weights are still the defaults until they are tuned on
 > real runs. Submission deadline: 29 Nov 2026, 23:59. See [ROADMAP.md](ROADMAP.md),
 > [docs/TESTING.md](docs/TESTING.md) and [What is not built yet](#what-is-not-built-yet).
 
