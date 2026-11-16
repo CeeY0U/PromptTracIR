@@ -43,7 +43,8 @@ def parse(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
             for lineno, line in enumerate(f, 1):
                 line = line.strip()
                 if line:
-                    yield str(lineno), f"line:{lineno}", json.loads(line)
+                    # zero-padded: events with equal timestamps sort by event_id
+                    yield f"{lineno:08d}", f"line:{lineno}", json.loads(line)
     yield from events_from_records(records(), evidence_id, PARSER, "trace")
 
 

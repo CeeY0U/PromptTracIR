@@ -122,6 +122,8 @@ Done when, on the training split collected so far: tool-to-process precision is 
 
 Status (2026-11-16, v0.4.0): rebuilt on top of v0.3.1 and the first lab runs. Every item above is built and tested on synthetic cases, and the 4688/Sysmon merge on lab run01's records: settings file and `ptir config`; clock offset from child PIDs and configurable drift windows; 4688 process tree and 4104 link evidence; UserAssist, LNK / Jump List, ShellBags, outside-session and logon-type signals; runtime inference for Claude Code; `--without` ablations; calibration (ECE, Brier), complete-evidence subset and family filters in `eval-batch`. SRUM stays an impact signal for v0.5 (it is per application per hour, too coarse to attribute a single process). Not done: tuning on real training runs and the two numeric targets, which need the dataset (docs/TESTING.md, Part 9).
 
+Status (2026-11-16, v0.4.1): the first v0.4.0 lab run (scripted model) exposed a trace-ordering bug that stopped `ptir analyze`; fixed. The lab VM side (harness, collection) is unchanged.
+
 ### v0.5: Causal reconstruction (Phase 4, RQ2 and RQ3)
 
 Goal: source fragment to tool call to host effect, with cross-checked evidence.
