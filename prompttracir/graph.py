@@ -37,11 +37,12 @@ class ProvGraph:
 
     # ---------- primitives ----------
     def add_node(self, node: Node) -> str:
-        if node.id in self.g:
-            cur: Node = self.g.nodes[node.id]["node"]
+        data = self.g.nodes[node.id] if node.id in self.g else None
+        if data is not None and "node" in data:
+            cur: Node = data["node"]
             cur.evidence = sorted(set(cur.evidence) | set(node.evidence))
             cur.attrs.update({k: v for k, v in node.attrs.items() if v is not None})
-        else:
+        else:   # new, or so far only the end of an edge added before its node
             self.g.add_node(node.id, node=node)
         return node.id
 
@@ -69,7 +70,9 @@ class ProvGraph:
         return self.g.nodes[nid]["node"]
 
     def nodes(self, kind: NodeKind | None = None) -> list[Node]:
-        return [d["node"] for _, d in self.g.nodes(data=True) if kind is None or d["node"].kind == kind]
+        # an edge may name a node the evidence never defines (a fragment missing from the trace)
+        return [d["node"] for _, d in self.g.nodes(data=True)
+                if "node" in d and (kind is None or d["node"].kind == kind)]
 
     def edges(self) -> list[Edge]:
         return [d["edge"] for _, _, d in self.g.edges(data=True)]
@@ -282,6 +285,8 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
                     if n.attrs.get("ip") == ip:
                         pg.add_edge(Edge(src=f"domain:{e.object.lower()}", dst=n.id, relation="resolved_to",
                                          status=O, evidence=[e.event_id]))
+    # an edge to a node the evidence never defines leaves a bare placeholder: drop it
+    pg.g.remove_nodes_from([n for n, d in pg.g.nodes(data=True) if "node" not in d])
     return pg
 
 
