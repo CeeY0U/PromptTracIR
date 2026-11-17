@@ -64,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("analyze", help="correlate, build graph, run rules, traceback, impact")
     p.add_argument("case")
     p.add_argument("--replay-url"); p.add_argument("--replay-model"); p.add_argument("--samples", type=int, default=3)
+    p.add_argument("--localizer", default="auto", choices=["auto", "segment", "heuristic", "replay", "group"],
+                   help="traceback method (default auto: replay with --replay-url, else segment)")
     p.add_argument("--llm-url"); p.add_argument("--llm-model")
     p.add_argument("--config", help="attribution settings JSON (only the keys you change; see `ptir config`)")
     p.add_argument("--without", action="append", metavar="KIND", default=[],
@@ -180,7 +182,8 @@ def main(argv: list[str] | None = None) -> int:
             cfg = config_mod.load(a.config)
             res = analyze(Case(a.case), replayer, llm, a.samples, config=cfg, without=a.without,
                           tag=a.tag or (None if not a.without else
-                                        "without-" + "-".join(sorted(a.without)).replace("_", "")))
+                                        "without-" + "-".join(sorted(a.without)).replace("_", "")),
+                          localizer=a.localizer)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
@@ -203,7 +206,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ground truth not found: {a.ground_truth}" + _msys_hint(a.ground_truth), file=sys.stderr)
             return 2
         gt = json.loads(Path(a.ground_truth).read_text(encoding="utf-8-sig"))
-        print(json.dumps(evaluate_case(Case(a.case), gt), indent=2))
+        sc_path = Path(a.ground_truth).parent / "scenario.json"
+        payload = None
+        if sc_path.exists():
+            payload = (json.loads(sc_path.read_text(encoding="utf-8-sig")).get("injection") or {}).get("payload")
+        print(json.dumps(evaluate_case(Case(a.case), gt, payload=payload), indent=2))
     elif a.cmd == "eval-batch":
         from .batch import evaluate_runs, find_runs, summary_lines, write_report
         runs = find_runs(a.root, a.case_name)

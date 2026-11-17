@@ -67,12 +67,14 @@ def excluded_evidence(case: Case, without: list[str] | None) -> set[str]:
 
 
 def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int = 3,
-            config: dict | None = None, without: list[str] | None = None, tag: str | None = None) -> dict:
+            config: dict | None = None, without: list[str] | None = None, tag: str | None = None,
+            localizer: str = "auto") -> dict:
     """Correlate and analyse a case.
 
     config   settings from prompttracir.config (default: the built-in defaults)
     without  evidence kinds to leave out (ablation); their events are ignored, not deleted
     tag      write outputs to output/<tag>/ instead of output/ (keeps the full analysis intact)
+    localizer traceback method: auto, segment, heuristic, replay or group (see traceback.py)
     """
     cfg = config if config is not None else config_mod.load()
     drop = excluded_evidence(case, without)
@@ -87,7 +89,7 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
     envelope = case.meta.get("envelope", {})
     findings = run_rules(pg, envelope)
     deviating = sorted({f.attrs["tool_call"] for f in findings if f.attrs.get("tool_call")})
-    tb_log = run_traceback(pg, deviating, load_requests(case), replayer, samples)
+    tb_log = run_traceback(pg, deviating, load_requests(case), replayer, samples, method=localizer)
 
     llm_out = []
     if llm is not None:
