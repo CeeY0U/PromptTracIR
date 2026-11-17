@@ -159,6 +159,12 @@ def main(out: Path) -> None:
         "process_labels": {guid(6).strip("{}"): "agent", guid(7).strip("{}"): "agent",
                            guid(8).strip("{}"): "human"},
         "exfiltration": {"collect.attacker-lab.test": "confirmed"},
+        # v0.5: what each malicious call did, for chain reconstruction scores
+        "tool_process_links": {"tool_call:t3": guid(6).strip("{}")},
+        "malicious_details": [
+            {"tool_call": "tool_call:t2", "files": [r"C:\Users\lab\secrets\api_keys.txt"], "destinations": []},
+            {"tool_call": "tool_call:t3", "files": [r"C:\Users\lab\secrets\api_keys.txt"],
+             "destinations": ["collect.attacker-lab.test"]}],
     }, indent=2))
     print(f"sample written to {out}")
 
