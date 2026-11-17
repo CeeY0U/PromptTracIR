@@ -83,7 +83,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("eval-batch", help="score every analysed run under ROOT and aggregate")
     p.add_argument("root", help="folder of runs: ROOT/<run>/ground_truth.json and ROOT/<run>/case/")
-    p.add_argument("--out", help="write results.json and per_run.csv here (default: ROOT/results)")
+    p.add_argument("--out", help="write results.json and per_run.csv here (default: ROOT/results); "
+                                  "an ablation or --tag goes to OUT/<tag>/")
     p.add_argument("--case-name", default="case")
     p.add_argument("--reviewed-only", action="store_true", help="skip runs whose labels were not reviewed")
     p.add_argument("--families", help="only these scenario families (comma-separated), e.g. the training split")
@@ -220,7 +221,9 @@ def main(argv: list[str] | None = None) -> int:
             print(e, file=sys.stderr)
             return 2
         tag = report["condition"]["tag"]
-        j, c = write_report(report, a.out or Path(a.root) / "results" / (tag or ""))
+        # every condition gets its own folder, also under --out, so an ablation never
+        # overwrites the full-evidence results.json
+        j, c = write_report(report, Path(a.out or Path(a.root) / "results") / (tag or ""))
         print("\n".join(summary_lines(report)))
         print(f"\nwrote {j} and {c}")
     return 0

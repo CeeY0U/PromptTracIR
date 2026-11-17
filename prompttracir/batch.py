@@ -191,6 +191,10 @@ def per_run_rows(report: dict) -> list[dict]:
             "complete_evidence": r["_complete"], "evidence_kinds": " ".join(r["_kinds"]),
             "config": r["_config"],
             "impact": "; ".join(f"{d}:{v['gold']}->{v['pred']}" for d, v in r["impact"].items()),
+            "model": (r.get("run_conditions") or {}).get("model"),
+            "temperature": (r.get("run_conditions") or {}).get("temperature"),
+            "seed": (r.get("run_conditions") or {}).get("seed"),
+            "dropped_parallel_calls": (r.get("run_conditions") or {}).get("dropped_parallel_calls"),
         })
     return rows
 

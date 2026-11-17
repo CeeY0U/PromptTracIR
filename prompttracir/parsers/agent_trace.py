@@ -74,7 +74,9 @@ def events_from_records(records: Iterable[tuple[str, str, dict]], evidence_id: s
                 process_guid=_g(r.get("process_guid")), host=r.get("host"), user=r.get("user"),
                 image=r.get("image"),
                 attrs={"agent": r.get("agent"), "model": r.get("model"),
-                       "scenario_id": r.get("scenario_id"), "cwd": r.get("cwd")}, **base)
+                       "scenario_id": r.get("scenario_id"), "cwd": r.get("cwd"),
+                       "temperature": r.get("temperature"), "seed": r.get("seed"),
+                       "serial_tools": r.get("serial_tools")}, **base)
         elif t == "user_prompt":
             yield CanonicalEvent(
                 event_id=eid, action=Action.USER_PROMPT,
@@ -95,7 +97,8 @@ def events_from_records(records: Iterable[tuple[str, str, dict]], evidence_id: s
                 event_id=eid, action=Action.TOOL_CALL, tool_call_id=r["tool_call_id"],
                 model_call_id=r.get("model_call_id"),
                 command_line=args.get("command") if isinstance(args, dict) else None,
-                attrs={"tool": r["tool"], "args": args}, **base)
+                attrs={"tool": r["tool"], "args": args,
+                       "dropped_parallel_calls": r.get("dropped_parallel_calls") or 0}, **base)
         elif t == "tool_result":
             yield CanonicalEvent(
                 event_id=eid, action=Action.TOOL_RESULT, tool_call_id=r["tool_call_id"],

@@ -99,10 +99,17 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
     def add(kind, sev, summary, nodes, evidence, **attrs):
         tc = attrs.get("tool_call") or next((t for n in nodes if (t := owning_tool_call(pg, n))), None)
         target = (attrs.get("path") or attrs.get("destination") or "").lower()
-        # one finding per (kind, tool call, target); extra actors/evidence are merged in
-        key = (kind, tc, target) if target else (kind, tc, tuple(sorted(nodes)))
+        # one finding per (kind, tool call, target); extra actors/evidence are merged in. A
+        # finding without a target (persistence, credential access) is one per tool call: the
+        # call, its cmd.exe and the schtasks.exe it started are one action, not three.
+        if target:
+            key = (kind, tc, target)
+        else:
+            key = (kind, tc) if tc else (kind, None, tuple(sorted(nodes)))
         if key in findings:
             f = findings[key]
+            if not target and tc and pg.node(nodes[0]).kind == NodeKind.TOOL_CALL:
+                f.summary = summary          # name the action after the tool call when there is one
             f.nodes = sorted(set(f.nodes) | set(nodes))
             f.evidence = sorted(set(f.evidence) | set(evidence))
             return

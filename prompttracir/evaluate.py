@@ -5,7 +5,31 @@ ablations) to produce the evaluation tables in the report.
 """
 from __future__ import annotations
 
+import re
+
 from .case import Case
+
+# A process seen only in Security 4688 (no Sysmon) gets the id pid<PID>@<epoch>. Gold labels name
+# Sysmon ProcessGuids, so such a process is matched to the Sysmon record with the same PID that
+# started within this many seconds (the 4688/Sysmon dedupe window).
+SYNTHETIC_GUID = re.compile(r"^pid(\d+)@(\d+(?:\.\d+)?)$")
+ALIAS_TOL_S = 2.0
+
+
+def process_aliases(events) -> "callable":
+    """Map a synthetic 4688 process id to the Sysmon ProcessGuid of the same process, if any."""
+    from .schema import Action
+    creates = [(e.pid, e.ts(), e.process_guid) for e in events
+               if e.action == Action.PROCESS_CREATE and e.process_guid]
+
+    def canon(guid: str | None) -> str | None:
+        m = SYNTHETIC_GUID.match(guid or "")
+        if not m:
+            return guid
+        pid, t = int(m.group(1)), float(m.group(2))
+        near = [(abs(ts - t), g) for p, ts, g in creates if p == pid and abs(ts - t) <= ALIAS_TOL_S]
+        return min(near)[1] if near else guid
+    return canon
 
 
 def prf(pred: set, gold: set) -> dict:
@@ -57,10 +81,12 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dic
     pred_mal = {f["attrs"]["tool_call"] for f in findings if f["attrs"].get("tool_call")}
     out["malicious_tool_calls"] = prf(pred_mal, set(gt.get("malicious_tool_calls", [])))
 
+    events = case.load_events()
+    canon = process_aliases(events)
     gold_labels = dict(gt.get("process_labels", {}))
-    gold_labels.update(_labels_from_pids(case, gt))
-    by_guid = {a["process_guid"]: a["label"] for a in attrs}
-    prob = {a["process_guid"]: a.get("agent_probability") for a in attrs}
+    gold_labels.update(_labels_from_pids(case, gt, events))
+    by_guid = {canon(a["process_guid"]): a["label"] for a in attrs}
+    prob = {canon(a["process_guid"]): a.get("agent_probability") for a in attrs}
     rows = [(gold, by_guid.get(g, "missing")) for g, gold in gold_labels.items()]
     probs = [(prob.get(g), gold) for g, gold in gold_labels.items()]
     classes = sorted({g for g, _ in rows})
@@ -77,27 +103,42 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3) -> dic
     }
     if "tool_process_links" in gt:   # written by harness/label_run.py from child PID + Sysmon
         links = case.read_output("tool_links.json") or []
-        pred_links = {(f"tool_call:{l['tool_call_id']}", l["process_guid"]) for l in links}
+        pred_links = {(f"tool_call:{l['tool_call_id']}", canon(l["process_guid"])) for l in links}
         gold_links = {(tc, g) for tc, g in gt["tool_process_links"].items()}
         out["tool_process_links"] = prf(pred_links, gold_links)
         out["tool_process_links"]["scored"] = [
-            {"score": l["score"], "correct": (f"tool_call:{l['tool_call_id']}", l["process_guid"]) in gold_links,
+            {"score": l["score"],
+             "correct": (f"tool_call:{l['tool_call_id']}", canon(l["process_guid"])) in gold_links,
              "status": l["status"]} for l in links]
     pred_imp = {i["destination"]: i["level"] for i in impact}
     # "unknown" means the labeller had no sink evidence either way: shown, but not scored
     out["impact"] = {d: {"gold": lvl, "pred": pred_imp.get(d, "missing"), "scored": lvl != "unknown"}
                      for d, lvl in gt.get("exfiltration", {}).items()}
+    out["run_conditions"] = run_conditions(graph)
     out["connection_only_labelled_confirmed"] = sum(
         1 for d, lvl in gt.get("exfiltration", {}).items()
         if lvl == "connection_only" and pred_imp.get(d) == "confirmed")
     return out
 
 
+def run_conditions(graph: dict) -> dict:
+    """Model, sampling and harness settings of the run, read from the agent trace."""
+    sessions = [n for n in graph.get("nodes", []) if n.get("kind") == "session"]
+    calls = [n for n in graph.get("nodes", []) if n.get("kind") == "tool_call"]
+    a = (sessions[0].get("attrs") or {}) if sessions else {}
+    model = a.get("model")
+    return {"agent": a.get("agent"), "model": model,
+            "scripted": bool(model and str(model).startswith("scripted")),
+            "temperature": a.get("temperature"), "seed": a.get("seed"),
+            "dropped_parallel_calls": sum((c.get("attrs") or {}).get("dropped_parallel_calls") or 0
+                                          for c in calls)}
+
+
 SHELL_IMAGES = {"powershell.exe", "pwsh.exe", "cmd.exe", "windowsterminal.exe", "openconsole.exe"}
 ORPHAN_MARGIN_S = 600.0
 
 
-def _labels_from_pids(case: Case, gt: dict) -> dict[str, str]:
+def _labels_from_pids(case: Case, gt: dict, events=None) -> dict[str, str]:
     """Expand harness-recorded root PIDs into per-process gold labels via the Sysmon tree.
 
     A root that started before the evidence window (typically the human's shell) has no
@@ -108,7 +149,7 @@ def _labels_from_pids(case: Case, gt: dict) -> dict[str, str]:
     if not roots:
         return {}
     from .correlate import ProcessIndex
-    pidx = ProcessIndex.build(case.load_events())
+    pidx = ProcessIndex.build(events if events is not None else case.load_events())
     window = _run_window(gt)
     out = {}
     for pid, label in roots:

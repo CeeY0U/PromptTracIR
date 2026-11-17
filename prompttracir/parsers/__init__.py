@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from . import agent_trace, claude_code, ez, otel, psreadline, volatility, windows, zeek
+from . import agent_trace, claude_code, ez, inventory, otel, psreadline, volatility, windows, zeek
 
 PARSERS = {
     "agent_trace": agent_trace.parse,      # PromptTracIR harness JSONL trace
@@ -31,6 +31,8 @@ PARSERS = {
     "vol_pslist": volatility.parse_pslist,     # windows.pslist / windows.pstree
     "vol_cmdline": volatility.parse_cmdline,   # windows.cmdline
     "vol_netscan": volatility.parse_netscan,   # windows.netscan
+    # v0.5
+    "file_inventory": inventory.parse,         # evidence/file_inventory.json (collect-run.ps1)
 }
 
 # Kinds that are hashed and preserved but not parsed into events (yet). Collect them

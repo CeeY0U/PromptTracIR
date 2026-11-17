@@ -94,7 +94,7 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
         from .llm import classify_tool_call
         llm_out = [classify_tool_call(pg, tc, llm) for tc in deviating]
 
-    impact = assess(pg, findings)
+    impact = assess(pg, findings, events)
     first = first_deviation(pg, findings)
     chain = attack_chain(pg, first, findings)
 

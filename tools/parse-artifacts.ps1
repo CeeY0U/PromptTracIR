@@ -124,6 +124,10 @@ Run-Ez "SBECmd" (Join-Path $Ev "registry") @("-d", (Join-Path $Ev "registry")) (
 
 # Memory
 $mem = Get-ChildItem -Path (Join-Path $Ev "memory") -File -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($mem -and $mem.Length -eq 0) {
+  Warn "memory image $($mem.Name) is empty (0 bytes): Volatility skipped"
+  $mem = $null; $memEmpty = $true
+}
 if ($Vol -and $mem) {
   New-Item -ItemType Directory -Force -Path $VolOut | Out-Null
   foreach ($p in @(@("windows.pstree", "vol_pstree.json"), @("windows.cmdline", "vol_cmdline.json"),
@@ -141,6 +145,13 @@ if ($Vol -and $mem) {
     }
     [IO.File]::WriteAllLines((Join-Path $VolOut $p[1]), [string[]]$json, (New-Object Text.UTF8Encoding($false)))
   }
+  # A partial image (cy-04) still opens, but the process list comes back short
+  $pstree = Join-Path $VolOut "vol_pstree.json"
+  if (Test-Path $pstree) {
+    $n = ([regex]::Matches((Get-Content -Raw $pstree), '"ImageFileName"')).Count
+    if ($n -lt 60) { Warn "vol_pstree.json lists only $n processes (complete images list 100 or more): the memory image is probably partial" }
+  }
+} elseif ($memEmpty) {
 } elseif (-not $mem) { Warn "no memory image under evidence\memory, Volatility skipped" }
 else { Warn "no -Vol given, Volatility skipped" }
 

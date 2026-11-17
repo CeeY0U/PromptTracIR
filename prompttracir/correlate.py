@@ -36,9 +36,18 @@ def basename(path: str | None) -> str:
     return re.split(r"[\\/]", path or "")[-1].lower()
 
 
+_PROGRAM = re.compile(r"(?:^|(?<= ))(?:[a-z]:\\|\\)?(?:[^ \\]+\\)*([^ \\]+)\.exe(?= |$)")
+
+
 def norm_cmd(cmd: str | None) -> str:
+    """Lower case, no quotes, single spaces, and programs without folder or ``.exe``.
+
+    A typed ``schtasks /query`` and Sysmon's ``"C:\\WINDOWS\\system32\\schtasks.exe" /query``
+    are the same command; so are ``curl`` and ``curl.exe``. Folders with spaces in them are left
+    as they are."""
     s = (cmd or "").lower().replace('"', "").replace("'", "")
-    return re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    return _PROGRAM.sub(r"\1", s)
 
 
 def norm_dir(path: str | None) -> str:
