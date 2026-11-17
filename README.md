@@ -20,7 +20,8 @@ contradicted, unknown) and links back to the exact raw record it came from.
 > calibrated P(agent) and ablations; v0.4.1 fixes trace ordering found in the first v0.4.0 lab run.
 > The weights are still the defaults until they are tuned on
 > real runs. Submission deadline: 29 Nov 2026, 23:59. See [ROADMAP.md](ROADMAP.md),
-> [docs/TESTING.md](docs/TESTING.md) and [What is not built yet](#what-is-not-built-yet).
+> [docs/TESTING.md](docs/TESTING.md), dataset progress in [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md)
+> (14 of 30 runs) and [What is not built yet](#what-is-not-built-yet).
 
 ---
 
@@ -246,7 +247,7 @@ Mapped to the proposal so the team can split it up:
 |---|---|---|
 | Case format, hashing, custody, canonical schema | done | |
 | Agent trace + harness with child-PID capture and request logging | done | plain loop; LangGraph optional; raw source bytes kept (v0.2) |
-| Scenario schema, setup, labelling with ProcessGuid and sink window | done (v0.2) | 3 scenarios; the dataset needs 60+ runs |
+| Scenario schema, setup, labelling with ProcessGuid and sink window | done (v0.2) | 3 scenarios; dataset 14 of 30 runs (`docs/DATASET_PROGRESS.md`) |
 | Lab collection script (logs, pcap, SRUM, Prefetch, Amcache, hives, LNK, memory, KAPE) | done (v0.2), run on the lab VM (v0.3.1) | exports logs from boot; copies hive transaction logs |
 | Sysmon / Security / PowerShell / PSReadLine / Zeek parsers | done | |
 | Tool-to-process correlation, human/agent attribution | done (v0.4) | settings file, clock offset, 4688/4104 coverage, UserAssist / LNK / ShellBags / logon signals, Claude Code runtime inference, calibrated P(agent); weights not yet tuned on real runs |

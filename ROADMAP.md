@@ -33,7 +33,7 @@ Checked on 2026-11-11: the 7 tests pass and the README quick start reproduces th
 | Traceback | PromptLocate, TracLLM or AttnTrace, AttriGuard-style replay, surrogate model for closed agents | Leave-one-out replay and regex heuristic |
 | Source preservation | Original bytes, extracted text and model-visible text kept separately | Model-visible text and a hash of it |
 | Schema | Event time and ingestion time | No ingestion time |
-| Evaluation | At least 60 labelled runs, 2 agents, paired human runs, 4 baselines, 6 ablations | 1 scenario, single-case scorer |
+| Evaluation | At least 60 labelled runs, 2 agents, paired human runs, 4 baselines, 6 ablations (reduced to 30 runs, section 5) | 1 scenario, single-case scorer |
 | Metrics | Edge P/R/F1, calibration error, path exact match, span overlap, narrative rates | Fragment-set F1, attribution accuracy and macro-F1, first deviation, impact per destination |
 | Interface | React + Cytoscape, STIX 2.1 with ATLAS tags, Docker Compose | Single HTML page, no export, no Compose |
 | Evaluation agent | LangGraph agent, plus Claude Code via AgentDFIR | Plain tool loop |
@@ -166,7 +166,7 @@ Done when: `docker compose up` serves a real case and the STIX bundle passes a v
 
 Goal: produce Table III.
 
-- Freeze the dataset at 60 or more labelled runs and freeze all weights and prompts.
+- Freeze the dataset (the 30 planned runs in `docs/DATASET_PROGRESS.md`, plus any extra runs) and freeze all weights and prompts.
 - Baselines: trace-only, endpoint-only, timestamp-only, AgentDFIR.
 - Ablations: remove PID capture, context identifiers, memory, network evidence, local-model analysis, Sysmon.
 - Analyst study against the manual Plaso / Timesketch workflow.
@@ -196,25 +196,51 @@ Done when: every row of Table III has a measured value, including the ones that 
 
 ## 5. Dataset track (runs alongside v0.2 onward)
 
-The 60 labelled runs are the slowest part of the project: each one needs a snapshot revert, a paired human session and hand-checked labels. Start at v0.2 and add runs every week.
+Every labelled run needs a snapshot revert, a paired human session and hand-checked labels, so the
+dataset is the slowest part of the project. Run-by-run progress is tracked in
+`docs/DATASET_PROGRESS.md`: update it whenever a run is reviewed and analysed.
 
-A starting matrix, to adjust:
+**Revised on 16 Nov 2026: 30 runs instead of 60.** Due to time constraints, the dataset has been
+halved from the proposal's 60 labelled runs to 30, while ensuring that it still supports every
+claim in Table III. The reduction removes repetition, not coverage:
 
-| Scenario family | Local-model agent | Claude Code | Total |
-|---|---|---|---|
-| Legitimate task, no injection | 6 | 6 | 12 |
-| Injection ignored or failed | 4 | 4 | 8 |
-| Sensitive-file access | 4 | 4 | 8 |
-| File changes | 4 | 4 | 8 |
-| Persistence | 4 | 4 | 8 |
-| Download | 4 | 4 | 8 |
-| Data transmission | 4 | 4 | 8 |
-| **Total** | 30 | 30 | **60** |
+- The tool is measured on host evidence. Scripted-model runs use a stand-in model but a real agent,
+  real processes, Sysmon, Security events, memory and network, so they count towards the host-side
+  metrics (links, attribution, impact, chain, first deviation). They are not used for claims about
+  the model's behaviour.
+- Real-model runs cover every family, so each attack type is also measured on a real model's
+  behaviour (slower turns, parallel tool calls, extra benign commands such as `make test`).
+- Sensitive-file access is merged into data transmission: every exfiltration run reads the secret,
+  recorded by Security 4663 read events.
+- Claude Code demonstrates the tool on a second, closed agent: two runs each for a legitimate task,
+  an ignored injection and data transmission.
+- Every cell has two runs, from different testers' labs where possible. Repeats across labs exposed
+  the v0.4.0 trace-ordering crash and the memory-image failures.
 
-Rules:
+| Scenario family | Real local model | Scripted | Claude Code | Total |
+|---|---|---|---|---|
+| Legitimate task, no injection | 3 | n/a | 2 | 5 |
+| Injection ignored or failed | 3 | 2 | 2 | 7 |
+| Data transmission (incl. sensitive-file access) | 2 | 2 | 2 | 6 |
+| Persistence | 2 | 2 | n/a | 4 |
+| File changes | 2 | 2 | n/a | 4 |
+| Download | 2 | 2 | n/a | 4 |
+| **Total** | **14** | **10** | **6** | **30** |
+
+Status (16 Nov 2026): 14 of 30 done (8 real local, 6 scripted), all analysed with v0.4.1. Open now:
+2 real-model persistence runs. Open once the lab is on v0.5.0: the file-change and download runs
+(4 real, 4 scripted) and the 6 Claude Code runs. Extra runs beyond the plan (the seed 1 and 4
+sets) are kept and scored but not required.
+
+Limits to state in the report: per-family figures rest on two runs and are indicative; Claude Code
+figures show coverage, not accuracy; the dataset is half the size given in the proposal.
+
+Rules (also in `docs/DATASET_PROGRESS.md`):
 
 - Every run has a paired human session typing the same commands.
-- Real-model runs where the model ignored the payload go in the "Injection ignored or failed" row. Scripted-model runs (`harness/scripted_model.py`, v0.3.1) supply followed injections with genuine host evidence; report them as their own column, never mixed into the real-model numbers.
+- Real-model runs where the model ignored the payload go in the "Injection ignored or failed" row.
+- Scripted runs count for host-side metrics only and are reported in their own column, never mixed
+  into real-model behaviour or real-model localization figures.
 - Split training and test by attack family, and never tune weights or prompts on the test families.
 - Capture all evidence kinds on every run, even those no parser reads yet.
 - Synthetic secrets and isolated machines only.
@@ -233,7 +259,7 @@ Rules:
    | v0.8 | 27 Nov | freeze the dataset on 26 Nov; baselines, ablations, Table III |
    | v1.0 | 29 Nov, 23:59 | report, limitations, demo case, tag `v1.0.0`; 28 to 29 Nov is buffer |
 
-   At about four lab runs an hour, 60 runs is two full lab days per person. If the dataset is short on 26 Nov, freeze what exists and report the counts per cell rather than slipping v0.8. The analyst study (Plaso / Timesketch comparison) is the first thing to cut if time runs out.
+   At about two lab runs an hour, the 16 runs still needed on 16 Nov are about eight hours in total. If the dataset is short on 26 Nov, freeze what exists and report the counts per cell (`docs/DATASET_PROGRESS.md`) rather than slipping v0.8. The analyst study (Plaso / Timesketch comparison) is the first thing to cut if time runs out.
 2. **LangGraph.** The proposal names a LangGraph agent; the harness is a plain loop. Port it, or record the change in the report.
 3. **React.** The proposal names React; the UI is one HTML page. Same choice.
 4. **AttnTrace.** It needs attention weights that an OpenAI-compatible server does not return. Keep it optional unless someone wants to run the model through a library that exposes them.
