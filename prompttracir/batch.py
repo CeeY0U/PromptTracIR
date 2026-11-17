@@ -137,9 +137,11 @@ def _rate(values: list[bool]) -> float | None:
     return round(sum(values) / len(values), 3) if values else None
 
 
-def condition_tag(without: list[str] | None, tag: str | None) -> str | None:
+def condition_tag(without: list[str] | None, tag: str | None, localizer: str | None = None) -> str | None:
     if tag:
         return tag
+    if localizer and localizer != "auto":
+        return f"localizer-{localizer}" + ("-without-" + "-".join(sorted(without)).replace("_", "") if without else "")
     if without:
         return "without-" + "-".join(sorted(without)).replace("_", "")
     return None
@@ -148,11 +150,11 @@ def condition_tag(without: list[str] | None, tag: str | None) -> str | None:
 def evaluate_runs(runs: list[Path], case_name: str = "case", reviewed_only: bool = False,
                   families: list[str] | None = None, exclude_families: list[str] | None = None,
                   reanalyze: bool = False, config: dict | None = None, without: list[str] | None = None,
-                  tag: str | None = None) -> dict:
+                  tag: str | None = None, localizer: str | None = None) -> dict:
     """Score runs. With reanalyze (implied by config, without or tag), each case is analysed
     again into output/<tag>/ first, and that analysis is scored."""
-    reanalyze = reanalyze or config is not None or bool(without) or bool(tag)
-    tag = condition_tag(without, tag) or ("reanalyzed" if reanalyze else None)
+    reanalyze = reanalyze or config is not None or bool(without) or bool(tag) or bool(localizer)
+    tag = condition_tag(without, tag, localizer) or ("reanalyzed" if reanalyze else None)
     results, skipped = [], []
     for run in runs:
         gt = json.loads((run / "ground_truth.json").read_text(encoding="utf-8-sig"))
@@ -171,7 +173,7 @@ def evaluate_runs(runs: list[Path], case_name: str = "case", reviewed_only: bool
                 skipped.append({"run": run.name, "reason": "case not ingested (run ptir ingest)"})
                 continue
             try:
-                analyze(base, config=config, without=without, tag=tag)
+                analyze(base, config=config, without=without, tag=tag, localizer=localizer or "auto")
             except ValueError as e:          # e.g. an unknown kind in --without: report, do not hide
                 raise ValueError(f"{run.name}: {e}") from e
         case = base.view(tag) if tag else base
@@ -197,6 +199,7 @@ def evaluate_runs(runs: list[Path], case_name: str = "case", reviewed_only: bool
         groups.setdefault(r["_gt"].get("family") or "unknown", []).append(r)
     fps = sorted({r["_config"] for r in results if r["_config"]})
     return {"condition": {"tag": tag, "without": sorted(without or []), "reanalyzed": reanalyze,
+                          "localizer": localizer or "auto",
                           "config_fingerprints": fps, "families": families or [],
                           "exclude_families": exclude_families or []},
             "overall": aggregate(results) if results else {"runs": 0},

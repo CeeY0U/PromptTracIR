@@ -96,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--without", action="append", metavar="KIND", default=[],
                    help="ablation: leave this evidence kind out when re-analysing; repeat for several")
     p.add_argument("--tag", help="output/TAG/ for the re-analysis (default: derived from --without)")
+    p.add_argument("--localizer", choices=["auto", "segment", "heuristic", "replay", "group"],
+                   help="re-analyse with this traceback method (e.g. heuristic, the v0.1 baseline)")
 
     a = ap.parse_args(argv)
 
@@ -223,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
             cfg = config_mod.load(a.config) if a.config else None
             report = evaluate_runs(runs, a.case_name, a.reviewed_only, families=split(a.families),
                                    exclude_families=split(a.exclude_families), reanalyze=a.reanalyze,
-                                   config=cfg, without=a.without, tag=a.tag)
+                                   config=cfg, without=a.without, tag=a.tag, localizer=a.localizer)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2

@@ -140,3 +140,11 @@ def test_impact_confirmed_with_inventory_size():
     assert r["level"] == "confirmed" and r["bytes_sent_by"] == "zeek"
     pg.g.graph["inventory"] = {}
     assert assess(pg, [sens, eg])[0]["level"] == "probable"
+
+
+def test_condition_tag_for_localizer_baseline():
+    from prompttracir.batch import condition_tag
+    assert condition_tag(None, None, "heuristic") == "localizer-heuristic"
+    assert condition_tag(["sysmon"], None, "heuristic") == "localizer-heuristic-without-sysmon"
+    assert condition_tag(["sysmon"], None, None) == "without-sysmon"
+    assert condition_tag(None, None, "auto") is None
