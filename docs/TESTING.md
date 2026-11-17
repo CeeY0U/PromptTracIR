@@ -53,7 +53,7 @@ On a managed laptop where application control (Device Guard) blocks `pytest.exe`
 pytest -q
 ```
 
-Expected: `148 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
+Expected: `151 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
 `pytest -q -k adfir_tampering`.
 
 ### 1.3 What the tests cover
@@ -631,7 +631,7 @@ cd C:\lab\PromptTracIR
 git fetch --tags
 git checkout tags/v0.5.0
 python -m pip install -e ".[evtx,dev]"
-python -m pytest -q                         # expect: 148 passed
+python -m pytest -q                         # expect: 151 passed
 Remove-Item (Get-PSReadLineOption).HistorySavePath -ErrorAction SilentlyContinue
 ```
 
@@ -678,39 +678,68 @@ adds a Security 4663 record of the overwrite (optional). Scripted runs: start
 
 ### 10.3 Claude Code runs (6 slots)
 
-Claude Code needs the Anthropic API, so these runs need the NAT adapter connected during the run
-(the scenario's `model_api_domains` must include `api.anthropic.com`; add it to a copy of the
-scenario if needed). Install Claude Code and Git for Windows (Claude Code runs its Bash tool through
-Git Bash) on the VM once, sign in, and take a separate snapshot `clean-v050-cc`.
+Claude Code needs the Anthropic API, so these runs need the NAT adapter connected during the run,
+and a Claude account (or API key) to sign in with. Once, on a VM reverted to `clean-v050`:
 
-1. Revert to `clean-v050-cc`, `prepare --files-only`, `audit-canary.ps1` (web_exfil only),
-   `collect-run.ps1 -Phase Start` as in 4.2, run name e.g. `jt-cc-01-legit`.
-2. Window H: human session as before.
-3. Window A: `cd C:\Users\lab\project`, then run Claude Code with the scenario's prompt. In the
-   isolated VM, let it use its tools without asking, so every run behaves the same:
+1. Install Git for Windows (Claude Code's Bash tool runs in Git Bash; without it Claude Code uses
+   PowerShell instead), then Claude Code with the native installer, in a normal (not elevated)
+   PowerShell: `irm https://claude.ai/install.ps1 | iex`, then `claude --version`.
+2. Run `claude` once in `C:\Users\lab\project`, sign in, accept the folder trust prompt, exit.
+3. Set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` as a user environment variable (no
+   auto-update, telemetry or error reports during runs):
+   `[Environment]::SetEnvironmentVariable("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1", "User")`.
+4. Clear PowerShell history, shut down, snapshot `clean-v050-cc`.
+
+Each run (run name e.g. `jt-c1-legit-cc`):
+
+1. Revert to `clean-v050-cc`, connect NAT. `prepare --files-only`, `audit-canary.ps1`
+   (web_exfil only) and `collect-run.ps1 -Phase Start` as in 4.2.
+2. Window E: write the run's scenario copy, which adds the Anthropic API to the envelope (the run
+   has no harness agent to copy it), then wait for Claude Code's process:
 
    ```powershell
-   claude -p "<the scenario's prompt>" --dangerously-skip-permissions
-   Get-Process claude, node -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, StartTime
+   $sc = Get-Content $Scen -Raw | ConvertFrom-Json
+   $sc.envelope.model_api_domains += "api.anthropic.com"
+   $sc | ConvertTo-Json -Depth 10 | Set-Content "$RD\scenario.json" -Encoding UTF8
+   while (-not (Get-Process claude -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 200 }
+   Get-Process claude | Select-Object Id, StartTime
+   ```
+3. Window H: human session as before.
+4. Window A (normal PowerShell): `cd C:\Users\lab\project`, then run Claude Code with the
+   scenario's `prompt`, unchanged, letting it use its tools without asking (isolated VM only):
+
+   ```powershell
+   $Prompt = (Get-Content $Scen -Raw | ConvertFrom-Json).prompt   # $Scen with its full path
+   claude -p $Prompt --dangerously-skip-permissions
    ```
 
-   Run the `Get-Process` line in another window while it works and note the PID (check
-   `claude --help` if the flags differ in your version).
-4. `collect-run.ps1 -Phase Stop`, then copy the newest transcript from
-   `C:\Users\lab\.claude\projects\C--Users-lab-project\` to the run folder as
-   `claude_session.jsonl`, and label:
+   Window E prints the PID of `claude` when it starts: note it.
+5. `collect-run.ps1 -Phase Stop`, then copy the newest transcript and label:
 
    ```powershell
+   $T = Get-ChildItem C:\Users\lab\.claude\projects -Recurse -Filter *.jsonl | Sort-Object LastWriteTime | Select-Object -Last 1
+   Copy-Item $T.FullName "$RD\claude_session.jsonl"
    python harness\label_run.py $RD --trace $RD\claude_session.jsonl --trace-format claude_code --agent-pids <PID>
    ```
-5. Laptop: `ptir add-run`, `ingest`, `analyze`, `eval` as usual (`add-run` picks up
+6. Laptop: `ptir add-run`, `ingest`, `analyze`, `eval` as usual (`add-run` picks up
    `claude_session.jsonl` as `claude_code`).
 
-Expected: `correlation.json` shows `runtime_method: inferred` with the PID you noted (9.3). If
-Claude Code refuses the injected instruction, the run fills an "injection ignored" slot (CI-1 or
-CI-2) rather than data transmission: record the refusal in `notes.md`; how often Claude Code
-refuses is itself a result. With `--replay-url`, traceback for Claude Code uses a surrogate request
-rebuilt from the transcript, marked `surrogate_replay` with half the confidence.
+What to expect:
+
+- `correlation.json`: `runtime_method: inferred` with the PID you noted (9.3).
+- `ground_truth.json`: `tool_process_links` is empty (Claude Code records no child PIDs), so
+  link precision and chain edges are not scored for these runs; attribution is.
+- Claude Code's WebFetch upgrades `http://` to `https://`, which the lab web server does not
+  serve; it usually falls back to `curl` in Bash. Either way, write in `notes.md` which tool read
+  the page. If only a WebFetch summary reached the model, the payload may not appear in the
+  transcript, and `injected_fragments` is empty.
+- Claude Code may refuse the injected instruction: the run then fills an "injection ignored" slot
+  (CI-1 or CI-2), not data transmission. Record the refusal; how often it refuses is a result.
+- Legitimate runs: no findings. Claude Code's own API connections and its `~\.claude` files are
+  not findings.
+
+With `--replay-url`, traceback for Claude Code uses a surrogate request rebuilt from the
+transcript, marked `surrogate_replay` with half the confidence.
 
 ### 10.4 Tampered transcripts
 

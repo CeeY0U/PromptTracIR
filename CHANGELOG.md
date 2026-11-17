@@ -49,7 +49,11 @@ reduced from 60 to 30 runs.
 - RECmd CSV with NUL bytes broke parsing on Python 3.10.
 - The agent trace parser dropped the run's temperature, seed and dropped parallel calls, so
   `eval-batch` could not report run conditions.
-- Tests: 124 -> 148 (`test_lab_fixes_v05.py`, `test_localizers.py`, `test_chain_v05.py`).
+- Claude Code runs: the runtime's own API connections inside a tool call's window (often to a
+  bare IP address) and writes to its `~\.claude` state were scope findings. Unclaimed in-process
+  connections are timing-only links, like unclaimed file effects, and are no longer egress.
+- Tests: 124 -> 151 (`test_lab_fixes_v05.py`, `test_localizers.py`, `test_chain_v05.py`,
+  `test_scope_paths.py`).
 
 Re-ingest cases from earlier versions (`ptir add-run` into a fresh `case/`). The lab VM needs
 v0.5.0 for new runs (collection changed).
