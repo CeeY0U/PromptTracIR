@@ -38,9 +38,12 @@ csv.field_size_limit(min(sys.maxsize, 2**31 - 1))   # MFTECmd resident data colu
 
 # ---------------- helpers ----------------
 def _rows(path: Path) -> Iterator[tuple[int, dict]]:
-    """Yield (line number, row) from an EZ Tools CSV (UTF-8 with or without BOM)."""
+    """Yield (line number, row) from an EZ Tools CSV (UTF-8 with or without BOM).
+
+    RECmd copies raw registry data into its CSV, NUL bytes included. Python 3.11+ reads
+    those; 3.10 stops with "line contains NUL", so they are dropped first."""
     with open(path, encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(line.replace("\x00", "") for line in f)
         for row in reader:
             yield reader.line_num, {k.strip(): (v or "").strip() for k, v in row.items() if k}
 
