@@ -53,7 +53,7 @@ On a managed laptop where application control (Device Guard) blocks `pytest.exe`
 pytest -q
 ```
 
-Expected: `147 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
+Expected: `148 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
 `pytest -q -k adfir_tampering`.
 
 ### 1.3 What the tests cover
@@ -631,7 +631,7 @@ cd C:\lab\PromptTracIR
 git fetch --tags
 git checkout tags/v0.5.0
 python -m pip install -e ".[evtx,dev]"
-python -m pytest -q                         # expect: 147 passed
+python -m pytest -q                         # expect: 148 passed
 Remove-Item (Get-PSReadLineOption).HistorySavePath -ErrorAction SilentlyContinue
 ```
 

@@ -2,6 +2,58 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.5.0] - 2026-11-17
+
+Roadmap v0.5 (causal reconstruction), the fixes from the 14 v0.4 lab runs, and the dataset
+reduced from 60 to 30 runs.
+
+### Added
+- Localizer plug-ins (`prompttracir/traceback.py`): `segment` (PromptLocate-style: fragments
+  split into sentences, the span with the payload's instruction and target is localized; default
+  without a model), `heuristic` (cue-only baseline), `replay` (leave-one-out, up to 8 fragments),
+  `group` (TracLLM-style group search, more than 8 fragments) and surrogate replay for Claude Code
+  transcripts, marked `surrogate_replay` at half confidence. `ptir analyze --localizer`, and
+  `ptir eval-batch --localizer` to score a baseline into its own folder.
+- Transcript cross-check (`prompttracir/crosscheck.py`): each tool call is compared with Sysmon,
+  4688 and memory; edges are marked corroborated or contradicted, with `transcript_mismatch` and
+  `untraced_agent_process` findings. Output `crosscheck.json`; the summary reports `contradicted`.
+- `harness/tamper_trace.py`: copies a run with an edited command or a dropped tool call, for the
+  roadmap's tampered-transcript case. `eval-batch` scores tampered copies only for detection.
+- Metrics: injected-span overlap F1 (characters), attack-chain node and edge precision, recall
+  and F1 (all runs and complete-evidence runs), path exact match, tampered traces detected.
+- File inventory at collection (`collect-run.ps1` step 7b, `evidence/file_inventory.json`,
+  evidence kind `file_inventory`): sizes and times of files under the lab folders, so impact can be
+  confirmed without KAPE. SRUM bytes as impact evidence when there is no Zeek record.
+- Graph: `LOGON_SESSION` and `DATA_OBJECT` node kinds; `graph_reduced.json` keeps the attack
+  chain's nodes and their direct neighbours, for large cases.
+- Scenarios `file_change_01` and `download_01` (and their scripted-model plans).
+- `label_run.py`: payload spans, GUI launches and human process labels from the human session
+  logs, for span and chain scoring.
+- `docs/DATASET_PROGRESS.md` (replaces `docs/DATASET.md`): 30 slots with status. TESTING.md
+  Part 10: v0.5 lab update, new scenarios, Claude Code runs, tampered transcripts, replay.
+
+### Changed
+- Dataset reduced from 60 to 30 runs because of time constraints, keeping every claim in Table
+  III supported (ROADMAP.md, section 5).
+- Typed and full-path commands match (`curl` vs `C:\Windows\System32\curl.exe`).
+- Effects of in-process tool calls are assigned to one call each, within the call's window.
+- Processes seen only in 4688 are scored as their Sysmon twin (same PID within 2 s).
+- `collect-run.ps1` warns when `llama-server` is still running and reports empty or short memory
+  images; `parse-artifacts.ps1` skips Volatility on an empty image and warns on a partial one.
+
+### Fixed
+- `file_persist_01`'s payload was not localized by the v0.4 heuristic (localization F1 0.8 on
+  the lab runs; 1.0 now).
+- One persistence finding per tool call instead of one per registry value.
+- `ptir eval-batch --out` overwrote earlier conditions; each condition gets its own folder.
+- RECmd CSV with NUL bytes broke parsing on Python 3.10.
+- The agent trace parser dropped the run's temperature, seed and dropped parallel calls, so
+  `eval-batch` could not report run conditions.
+- Tests: 124 -> 148 (`test_lab_fixes_v05.py`, `test_localizers.py`, `test_chain_v05.py`).
+
+Re-ingest cases from earlier versions (`ptir add-run` into a fresh `case/`). The lab VM needs
+v0.5.0 for new runs (collection changed).
+
 ## [0.4.1] - 2026-11-16
 
 Fix from the first v0.4.0 lab run (`jt-01-exfil-scripted`, scripted model).

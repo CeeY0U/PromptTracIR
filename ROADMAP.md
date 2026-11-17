@@ -138,6 +138,8 @@ Goal: source fragment to tool call to host effect, with cross-checked evidence.
 
 Done when, on the training split: localization F1 is at least 0.80 on successful-injection runs, chain edge F1 is at least 0.85 on complete-evidence runs, and the tampered-transcript case shows a contradicted edge.
 
+Status (2026-11-17, v0.5.0): every item above is built and tested, together with the fixes from the 14 v0.4 lab runs (14 items in the v0.5 backlog). Localizers: PromptLocate-style segments (default without a model), the cue-only heuristic as baseline, replay leave-one-out (up to 8 fragments) and TracLLM-style group search (more than 8), surrogate replay at half confidence for Claude Code; AttnTrace not built (needs attention weights). Transcript cross-check against Sysmon, 4688 and memory, with a tamper tool for the edited-transcript case. File inventory at collection gives impact without KAPE; SRUM bytes when there is no Zeek record. On 8 lab runs re-analysed with v0.5.0: localization F1 1.0 (0.8 with v0.4.1), span overlap 1.0, chain edge F1 1.0, path exact match 1.0, 3 of 3 tampered copies contradicted and none of the untampered runs. Not done: replay fidelity on the real model (docs/TESTING.md, 10.5) and the new scenario and Claude Code runs (10.2, 10.3), which need the lab VM on v0.5.0.
+
 ### v0.6: Local model analysis (Phase 5, RQ4)
 
 Goal: explanations that cannot invent evidence.

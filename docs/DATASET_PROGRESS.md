@@ -4,7 +4,8 @@ The evaluation dataset for v0.8 (Table III). Update this file whenever a run is 
 reviewed and analysed: fill in the run ID and set the status. The roadmap (section 5) explains why
 the plan has 30 runs instead of the proposal's 60.
 
-Last updated: 16 Nov 2026, analysis with v0.4.1.
+Last updated: 17 Nov 2026. The 14 done runs were analysed with v0.4.1; re-analyse them with
+v0.5.0 (docs/TESTING.md, 10.1) before scoring. The 16 open runs are collected with v0.5.0.
 
 ## Progress
 
