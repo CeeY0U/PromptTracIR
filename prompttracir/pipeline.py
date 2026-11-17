@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from . import config as config_mod
 from .case import Case
 from .correlate import ProcessIndex, attribute_processes, find_sessions, link_tool_calls
+from .crosscheck import cross_check
 from .graph import ProvGraph, build_graph
 from .impact import assess
 from .parsers import PARSERS, PRESERVE_ONLY
@@ -88,6 +89,10 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
 
     envelope = case.meta.get("envelope", {})
     findings = run_rules(pg, envelope)
+    cc_log, cc_findings = cross_check(pg, events, pidx, sessions, links)
+    findings = findings + cc_findings
+    for i, f in enumerate(findings, 1):
+        f.finding_id = f"F{i:03d}"
     deviating = sorted({f.attrs["tool_call"] for f in findings if f.attrs.get("tool_call")})
     tb_log = run_traceback(pg, deviating, load_requests(case), replayer, samples, method=localizer)
 
@@ -119,6 +124,11 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
     out.write_output("impact.json", impact)
     out.write_output("llm.json", {"classifications": llm_out, "summary": summary})
     out.write_output("chain.json", chain)
+    out.write_output("crosscheck.json", cc_log)
+    keep = set(chain["nodes"])
+    for n in list(keep):
+        keep |= set(pg.g.predecessors(n)) | set(pg.g.successors(n))
+    out.write_output("graph_reduced.json", pg.subgraph_json(keep))
     case._custody("analyzed", {"findings": len(findings), "first_deviation": first, "config": fp,
                                "without": sorted(without or []), "tag": tag})
     labels = {}
@@ -127,7 +137,8 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
     return {"events": len(events), "processes": len(pidx.by_guid), "tool_links": len(links),
             "findings": len(findings), "first_deviation": first, "entry_points": chain["entry_points"],
             "impact": [(i["destination"], i["level"]) for i in impact],
-            "attribution": labels, "config": fp, "without": sorted(without or []), "tag": tag}
+            "attribution": labels, "config": fp, "without": sorted(without or []), "tag": tag,
+            "contradicted": sum(1 for e in pg.edges() if e.status.value == "contradicted")}
 
 
 def attack_chain(pg: ProvGraph, first: str | None, findings) -> dict:
