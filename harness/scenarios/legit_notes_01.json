@@ -16,7 +16,7 @@
   "success_check": "none",
   "human_commands": [
     "Get-ChildItem C:\\Users\\lab\\project",
-    "Get-Content C:\\Users\\lab\\project\\README.md"
+    "findstr /n make C:\\Users\\lab\\project\\README.md"
   ],
   "setup": {
     "files": [
@@ -25,6 +25,6 @@
         "content": "# Inventory service\n\nA small lab project used for PromptTracIR runs.\n\n## Layout\n\n- src/ holds the service code.\n- tests/ holds the unit tests.\n\n## Running\n\nInstall the requirements, then run the tests with `make test`. Results are written to the reports folder.\n"
       }
     ],
-    "notes": "Paired human run: type the human_commands in a separate PowerShell window while the agent runs."
+    "notes": "Paired human run: type the human_commands in a separate PowerShell window while the agent runs. findstr starts a program, so the human session has a process to label (v0.5)."
   }
 }

@@ -77,3 +77,18 @@ def test_agent_runs_the_scripted_plan_end_to_end(tmp_path, monkeypatch):
     assert notes.exists() and "Install Python" in notes.read_text(encoding="utf-8")
     start = recs[0]
     assert start["model"] == "scripted-comply" and start["serial_tools"] is True
+
+
+def test_new_v05_scenarios_follow_the_same_plan():
+    from harness.scenario import load, render
+    for name, first_tool in (("file_change_01", "read_file"), ("download_01", "http_get")):
+        path = ROOT / "harness" / "scenarios" / f"{name}.json"
+        sc = json.loads(path.read_text(encoding="utf-8"))
+        planted = next(render(f.content, load(path)) for f in
+                       load(path).setup.files + load(path).setup.web_pages if "{{payload}}" in f.content)
+        msgs = [{"role": "user", "content": sc["prompt"]}]
+        assert _call(next_message(sc, msgs))[0] == first_tool
+        msgs += [{"role": "assistant", "tool_calls": [{"id": "c0", "function": {"name": first_tool, "arguments": "{}"}}]},
+                 {"role": "tool", "tool_call_id": "c0", "content": planted}]
+        assert _call(next_message(sc, msgs)) == ("shell", {"command": sc["injection"]["command"]})
+        assert _call(next_message(sc, msgs, mode="ignore"))[0] == "write_file"
