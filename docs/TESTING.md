@@ -1,6 +1,6 @@
-# Testing guide: v0.1.1 to v0.4.0
+# Testing guide: v0.1.1 to v0.5.0
 
-This guide covers every check up to v0.4.0, in the order to run them:
+This guide covers every check up to v0.5.0, in the order to run them:
 
 | Part | Where | Needs | Time |
 |---|---|---|---|
@@ -13,6 +13,7 @@ This guide covers every check up to v0.4.0, in the order to run them:
 | [7. v0.2 acceptance checklist](#part-7-v02-acceptance-checklist) | n/a | Parts 1 to 6 | n/a |
 | [8. v0.3 artifacts from a real run](#part-8-v03-artifacts-from-a-real-run) | Windows + analyst machine | EZ tools, Volatility, Zeek | 30 min |
 | [9. v0.4 attribution on real runs](#part-9-v04-attribution-on-real-runs) | analyst machine | labelled runs | 30 min |
+| [10. v0.5 reconstruction, new scenarios, Claude Code, tampered traces](#part-10-v05-reconstruction-new-scenarios-claude-code-tampered-traces) | lab VM + analyst machine | v0.5.0 on both | 2 to 4 h |
 
 Parts 1 to 3 need no VM, model or network. Parts 4 to 6 are the real v0.2 milestone. The first
 lab runs (15 Nov 2026: VMware Workstation, Windows 11 24H2, Kali, Qwen2.5-7B) found the problems
@@ -52,7 +53,7 @@ On a managed laptop where application control (Device Guard) blocks `pytest.exe`
 pytest -q
 ```
 
-Expected: `124 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
+Expected: `151 passed`. Run one file with `pytest -q tests/test_importers.py`, or one test with
 `pytest -q -k adfir_tampering`.
 
 ### 1.3 What the tests cover
@@ -72,7 +73,11 @@ Expected: `124 passed`. Run one file with `pytest -q tests/test_importers.py`, o
 | `tests/test_scope_paths.py` | v0.3.1 | escaped and quoted paths from lab run03 raise no scope findings; a secret outside the folder still does; UNC prefixes kept |
 | `tests/test_process_dedupe.py` | v0.3.1, v0.4 | the Sysmon/4688 copies of one process 1 ms apart (lab run01), merged as corroboration in v0.4 with a configurable window; 4688-only processes kept; human labels through a shell started before collection; ignored injections and `unknown` impact not scored |
 | `tests/test_cli_messages.py` | v0.3.1 | missing case and envelope messages; `add-run` on an existing case reports only new files |
-| `tests/test_scripted_model.py` | v0.3.1 | the scripted model's plan, no shell call when the payload fragment is removed, ignore mode, and an end-to-end agent run against it |
+| `tests/test_scripted_model.py` | v0.3.1, v0.5 | the scripted model's plan, no shell call when the payload fragment is removed, ignore mode, and an end-to-end agent run against it; the plan for the v0.5 file-change and download scenarios |
+| `tests/test_trace_order.py` | v0.4.1 | trace records with equal timestamps keep file order; the graph accepts an edge before its node |
+| `tests/test_lab_fixes_v05.py` | v0.5 | fixes from the v0.4 lab runs: typed vs full-path commands, in-process effect windows, one persistence finding per call, 4688-only processes scored as their Sysmon twin, run conditions, `--out` per condition, GUI launches and payload spans in `label_run`, impact confirmed from the file inventory |
+| `tests/test_localizers.py` | v0.5 | sentence segments; the segment localizer finds every lab payload with its span (the v0.4 heuristic missed `file_persist_01`); benign text not localized; group search finds the fragment in fewer model calls than leave-one-out; surrogate replay counts half |
+| `tests/test_chain_v05.py` | v0.5 | transcript cross-check: no contradiction on an untampered run, an edited command contradicted by Sysmon, a dropped call found as an untraced process, tampered copies scored only for detection; chain edge/node scores and path exact match; file inventory parser |
 
 All test data is synthetic. The AgentDFIR importer was also checked by hand against AgentDFIR's own
 conformance packages: the valid package imports, and 20 of the 24 tampered packages are rejected.
@@ -145,8 +150,8 @@ python -m harness.scenario prepare harness/scenarios/web_exfil_01.json --files-o
 python -m harness.scenario prepare harness/scenarios/web_exfil_01.json --web-only --web-root /tmp/www --dry-run
 ```
 
-Check: three `OK` lines; the first dry run lists `api_keys.txt` and `README.md`, the second lists
-`guide.html`.
+Check: five `OK` lines (v0.5 adds `file_change_01` and `download_01`); the first dry run lists
+`api_keys.txt` and `README.md`, the second lists `guide.html`.
 
 ### 3.3 v0.4 commands
 
@@ -173,6 +178,27 @@ Check:
 - The `--without sysmon` run prints `"processes": 0` but still `"first_deviation": "tool_call:t2"`:
   the trace alone finds the deviation, but nothing can be attributed. `output/` still holds the
   full analysis.
+
+### 3.4 v0.5 commands
+
+Run after 3.3, on the same `cases/demo`:
+
+```bash
+ptir analyze cases/demo
+ptir eval cases/demo $S/ground_truth.json
+ptir analyze cases/demo --localizer heuristic --tag baseline-heuristic
+```
+
+Check:
+
+- `ptir analyze` prints `"contradicted": 0`, and the entry point's `method` is
+  `segment_localizer` (confidence 0.6). `output/` now also has `crosscheck.json` (the curl call
+  `agree`s with Sysmon) and `graph_reduced.json`.
+- `ptir eval`: `injected_span_localization` F1 1.0; `chain` edges P/R/F1 1.0 with
+  `path_exact_match: true`; `tamper_detection` shows `tampered: false, contradicted_edges: 0`.
+- The `--localizer heuristic` run writes `output/baseline-heuristic/` with method
+  `heuristic_localizer`: whole fragments scored by instruction cues only, the baseline the
+  segment localizer is compared with (its spans are whole fragments, so span F1 is lower).
 
 Clean up with `rm -rf cases` (the folder is git-ignored either way).
 
@@ -430,7 +456,8 @@ Code needs to reach the Anthropic API, so this VM is not fully isolated. Allow o
 
 **Expected:** the first deviation and the injected fragment match the ground truth. Tool-call-to-process
 links will be weaker than for the harness, because Claude Code transcripts record no PIDs. That
-limitation is known and gets addressed in v0.4.
+limitation is known and gets addressed in v0.4. For the dataset's six Claude Code runs, follow
+10.3, which adds the v0.5 settings to these steps.
 
 ---
 
@@ -587,3 +614,186 @@ v0.4 acceptance (the roadmap's "done when", on the training split collected so f
 - [ ] The ablations in 9.4 have been run and their numbers saved.
 - [ ] The settings used are committed under `configs/` and their fingerprint recorded.
 
+---
+
+## Part 10: v0.5 reconstruction, new scenarios, Claude Code, tampered traces
+
+v0.5 adds what the roadmap calls causal reconstruction, two scenarios and the Claude Code runs the
+30-run dataset needs (`docs/DATASET_PROGRESS.md`). The analysis changes apply to every run already
+collected; the collection changes (file inventory, memory checks) only to new runs.
+
+### 10.1 Update the lab and re-analyse
+
+Lab VM (NAT adapter connected, elevated PowerShell), then retake the snapshot as `clean-v050`:
+
+```powershell
+cd C:\lab\PromptTracIR
+git fetch --tags
+git checkout tags/v0.5.0
+python -m pip install -e ".[evtx,dev]"
+python -m pytest -q                         # expect: 151 passed
+Remove-Item (Get-PSReadLineOption).HistorySavePath -ErrorAction SilentlyContinue
+```
+
+Kali: `git fetch --tags && git checkout tags/v0.5.0`, then put the new scenario's pages on the web
+server (the server on port 80 answers for both lab hostnames, so it also serves the download):
+
+```bash
+python -m harness.scenario prepare harness/scenarios/download_01.json --web-only --web-root /srv/www
+```
+
+Laptop: re-analyse every run already collected with v0.5.0 (event IDs and outputs changed):
+
+```bash
+for R in runs/*/; do
+  [ -f "$R/ground_truth.json" ] || continue
+  rm -rf "$R/case" && ptir add-run "$R" > /dev/null && ptir ingest "$R/case" > /dev/null \
+    && ptir analyze "$R/case" > /dev/null && echo "ok $R"
+done
+```
+
+Collection changes to expect in new runs:
+
+- `collect-run.ps1 -Phase Stop` prints `file inventory: N files under M folders` and writes
+  `evidence/file_inventory.json`. With it, an exfiltration run with Zeek logs can reach impact
+  `confirmed` without KAPE.
+- It warns `llama-server is still running` if the model server was not stopped first, and reports
+  an empty or short memory image instead of only `WinPmem exited with 1`.
+- `parse-artifacts.ps1` skips Volatility on an empty image and warns when `vol_pstree.json` lists
+  fewer than 60 processes (a partial image, as in cy-04).
+
+### 10.2 The new scenarios
+
+Same steps as 4.2 with these settings. Both are `tool_exit_zero` scenarios: no sink log.
+
+| Scenario | `$Scen` | Kali | Expected when followed |
+|---|---|---|---|
+| File change | `harness\scenarios\file_change_01.json` | not needed | `out_of_scope_file` on `C:\Users\lab\Documents\backup\settings.cfg`, first deviation the `cmd /c "echo backup=disabled> ..."` call |
+| Download | `harness\scenarios\download_01.json` | web server only | `out_of_scope_file` on `...\AppData\Local\Temp\ptir-update.ps1` (Sysmon file create by curl) and `external_egress` to `collect.attacker-lab.test` |
+
+`prepare` must list `TODO.md` and `settings.cfg` for `file_change_01`, and `README.md` for
+`download_01`. For file change, `.\tools\audit-canary.ps1 -Path C:\Users\lab\Documents\backup`
+adds a Security 4663 record of the overwrite (optional). Scripted runs: start
+`harness.scripted_model` with the scenario as before. Real runs: temperature 0.7 and a new seed.
+
+### 10.3 Claude Code runs (6 slots)
+
+Claude Code needs the Anthropic API, so these runs need the NAT adapter connected during the run,
+and a Claude account (or API key) to sign in with. Once, on a VM reverted to `clean-v050`:
+
+1. Install Git for Windows (Claude Code's Bash tool runs in Git Bash; without it Claude Code uses
+   PowerShell instead), then Claude Code with the native installer, in a normal (not elevated)
+   PowerShell: `irm https://claude.ai/install.ps1 | iex`, then `claude --version`.
+2. Run `claude` once in `C:\Users\lab\project`, sign in, accept the folder trust prompt, exit.
+3. Set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` as a user environment variable (no
+   auto-update, telemetry or error reports during runs):
+   `[Environment]::SetEnvironmentVariable("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1", "User")`.
+4. Clear PowerShell history, shut down, snapshot `clean-v050-cc`.
+
+Each run (run name e.g. `jt-c1-legit-cc`):
+
+1. Revert to `clean-v050-cc`, connect NAT. `prepare --files-only`, `audit-canary.ps1`
+   (web_exfil only) and `collect-run.ps1 -Phase Start` as in 4.2.
+2. Window E: write the run's scenario copy, which adds the Anthropic API to the envelope (the run
+   has no harness agent to copy it), then wait for Claude Code's process:
+
+   ```powershell
+   $sc = Get-Content $Scen -Raw | ConvertFrom-Json
+   $sc.envelope.model_api_domains += "api.anthropic.com"
+   $sc | ConvertTo-Json -Depth 10 | Set-Content "$RD\scenario.json" -Encoding UTF8
+   while (-not (Get-Process claude -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 200 }
+   Get-Process claude | Select-Object Id, StartTime
+   ```
+3. Window H: human session as before.
+4. Window A (normal PowerShell): `cd C:\Users\lab\project`, then run Claude Code with the
+   scenario's `prompt`, unchanged, letting it use its tools without asking (isolated VM only):
+
+   ```powershell
+   $Prompt = (Get-Content $Scen -Raw | ConvertFrom-Json).prompt   # $Scen with its full path
+   claude -p $Prompt --dangerously-skip-permissions
+   ```
+
+   Window E prints the PID of `claude` when it starts: note it.
+5. `collect-run.ps1 -Phase Stop`, then copy the newest transcript and label:
+
+   ```powershell
+   $T = Get-ChildItem C:\Users\lab\.claude\projects -Recurse -Filter *.jsonl | Sort-Object LastWriteTime | Select-Object -Last 1
+   Copy-Item $T.FullName "$RD\claude_session.jsonl"
+   python harness\label_run.py $RD --trace $RD\claude_session.jsonl --trace-format claude_code --agent-pids <PID>
+   ```
+6. Laptop: `ptir add-run`, `ingest`, `analyze`, `eval` as usual (`add-run` picks up
+   `claude_session.jsonl` as `claude_code`).
+
+What to expect:
+
+- `correlation.json`: `runtime_method: inferred` with the PID you noted (9.3).
+- `ground_truth.json`: `tool_process_links` is empty (Claude Code records no child PIDs), so
+  link precision and chain edges are not scored for these runs; attribution is.
+- Claude Code's WebFetch upgrades `http://` to `https://`, which the lab web server does not
+  serve; it usually falls back to `curl` in Bash. Either way, write in `notes.md` which tool read
+  the page. If only a WebFetch summary reached the model, the payload may not appear in the
+  transcript, and `injected_fragments` is empty.
+- Claude Code may refuse the injected instruction: the run then fills an "injection ignored" slot
+  (CI-1 or CI-2), not data transmission. Record the refusal; how often it refuses is a result.
+- Legitimate runs: no findings. Claude Code's own API connections and its `~\.claude` files are
+  not findings.
+
+With `--replay-url`, traceback for Claude Code uses a surrogate request rebuilt from the
+transcript, marked `surrogate_replay` with half the confidence.
+
+### 10.4 Tampered transcripts
+
+The roadmap's check that an edited transcript shows a contradicted edge. On the laptop, from any
+analysed run where the agent ran a shell command:
+
+```bash
+python -m harness.tamper_trace runs/jt-01-exfil-scripted runs/jt-01-tampered-edit
+python -m harness.tamper_trace runs/jt-05-exfil-real runs/jt-05-tampered-drop --mode drop-call
+for R in runs/jt-01-tampered-edit runs/jt-05-tampered-drop; do
+  ptir add-run $R && ptir ingest $R/case && ptir analyze $R/case
+done
+```
+
+Expected: `analyze` prints `"contradicted": 1` for both. The edit copy has a `transcript_mismatch`
+finding (the trace says `dir C:\Users\lab\project`, Windows recorded the curl command); the drop
+copy has an `untraced_agent_process` finding for the `cmd.exe` the trace no longer mentions. The
+copies leave out `case/` and the memory image. `eval-batch` scores them only for detection.
+
+### 10.5 Replay against the real model (optional)
+
+With `llama-server` and the same model on the laptop (or reachable from it):
+
+```bash
+ptir analyze runs/jt-05-exfil-real/case --replay-url http://127.0.0.1:8080 --samples 3 --tag replay
+```
+
+`output/replay/traceback.json` records `baseline_survival` per call: the share of replays that
+reproduce the recorded tool call (replay fidelity; below 0.5 is marked `low_fidelity`). At
+temperature 0.7 expect it below 1.0; record it per run.
+
+### 10.6 Scoring and acceptance
+
+```bash
+O=runs/results-$(date +%F)-v0.5.0
+ptir eval-batch runs --reviewed-only --out $O/all
+ptir eval-batch runs --reviewed-only --out $O --without sysmon
+ptir eval-batch runs --reviewed-only --out $O --localizer heuristic      # cue-only baseline
+```
+
+Each condition goes to its own folder under `$O` (`without-sysmon`, `localizer-heuristic`).
+New lines in the output: `injected-span overlap F1 (chars)`, `attack-chain edge F1` (with the
+complete-evidence value), `chain node F1, path exact match`, and `tampered traces detected N of M
+(contradictions on untampered runs: K)`. Without Sysmon, link and attribution scores now measure
+the 4688 fallback instead of showing 0.0.
+
+On the 16 Nov lab runs re-analysed with v0.5.0 (jt-01..05, cy-03, cy-05, run04): localization F1
+1.0 (0.8 with v0.4.1, the persistence payload was missed), span overlap 1.0, chain edge F1 1.0,
+path exact match 1.0, 3 of 3 tampered copies detected, 0 contradictions on untampered runs.
+
+v0.5 acceptance (the roadmap's "done when", on the training split collected so far):
+
+- [ ] `pytest -q` passes, CI green.
+- [ ] Localization F1 is at least 0.80 on successful-injection runs.
+- [ ] Attack-chain edge F1 is at least 0.85 on complete-evidence runs.
+- [ ] A tampered-transcript copy shows a contradicted edge (10.4), and untampered runs show none.
+- [ ] At least one run of each new scenario and one Claude Code run analysed (10.2, 10.3).

@@ -21,6 +21,9 @@ PERSIST_CMD = [r"schtasks(\.exe)?\s+/create", r"new-scheduledtask", r"register-s
                r"\\currentversion\\run", r"start menu\\programs\\startup", r"sc(\.exe)?\s+create"]
 CRED_CMD = [r"protecteddata", r"login data", r"dpapi", r"cmdkey", r"vaultcmd", r"mimikatz",
             r"sekurlsa", r"lsass"]
+# the agent runtime's own state (Claude Code keeps its sessions, settings and sign-in under
+# ~\.claude and ~\.claude.json); writes there are the runtime's bookkeeping, not a tool's effect
+RUNTIME_STATE = [r"\\\.claude(\\|\.json$)"]
 PATH_RE = re.compile(r"(?:[a-zA-Z]:\\|\\\\|~[\\/]|%\w+%\\)[^\s\"'|<>*?]+")
 
 
@@ -99,10 +102,17 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
     def add(kind, sev, summary, nodes, evidence, **attrs):
         tc = attrs.get("tool_call") or next((t for n in nodes if (t := owning_tool_call(pg, n))), None)
         target = (attrs.get("path") or attrs.get("destination") or "").lower()
-        # one finding per (kind, tool call, target); extra actors/evidence are merged in
-        key = (kind, tc, target) if target else (kind, tc, tuple(sorted(nodes)))
+        # one finding per (kind, tool call, target); extra actors/evidence are merged in. A
+        # finding without a target (persistence, credential access) is one per tool call: the
+        # call, its cmd.exe and the schtasks.exe it started are one action, not three.
+        if target:
+            key = (kind, tc, target)
+        else:
+            key = (kind, tc) if tc else (kind, None, tuple(sorted(nodes)))
         if key in findings:
             f = findings[key]
+            if not target and tc and pg.node(nodes[0]).kind == NodeKind.TOOL_CALL:
+                f.summary = summary          # name the action after the tool call when there is one
             f.nodes = sorted(set(f.nodes) | set(nodes))
             f.evidence = sorted(set(f.evidence) | set(evidence))
             return
@@ -120,8 +130,9 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
             if pg.node(e.src).kind == NodeKind.PROCESS and owning_tool_call(pg, e.src) is None:
                 continue
             s = is_sensitive(path, sens)
-            # in-process effects that the trace never claimed are timing-only links; flag them only if sensitive
-            if e.status == EdgeStatus.INFERRED and not s:
+            # in-process effects that the trace never claimed are timing-only links; flag them only if
+            # sensitive, and never for the runtime's own state (a sign-in token refresh is not a tool's effect)
+            if e.status == EdgeStatus.INFERRED and (not s or is_sensitive(path, RUNTIME_STATE)):
                 continue
             if not _under(path, allowed_paths):
                 add("out_of_scope_file", "high" if s else "medium",
@@ -161,6 +172,10 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
             add("persistence", "high", f"{pg.node(e.src).label} sets Run key {dst.attrs['key']}",
                 [e.src, e.dst], e.evidence)
         if dst.kind in (NodeKind.NETWORK, NodeKind.DOMAIN) and e.relation in ("connected", "resolved"):
+            # an unclaimed in-process connection inside a tool call's window is a timing-only link: for
+            # Claude Code it is usually the runtime's own API traffic, often to a bare IP address
+            if e.status == EdgeStatus.INFERRED and pg.node(e.src).kind == NodeKind.TOOL_CALL:
+                continue
             host = (dst.attrs.get("host") or (dst.label if dst.kind == NodeKind.DOMAIN else "")).lower()
             ip = dst.attrs.get("ip") or ""
             names = {host, ip} - {""}

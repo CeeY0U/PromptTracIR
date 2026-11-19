@@ -165,6 +165,7 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
                              label=f"{e.attrs.get('tool')}({_short(e.attrs.get('args'))})",
                              attrs={"tool": e.attrs.get("tool"), "args": e.attrs.get("args"),
                                     "ts": e.timestamp.isoformat(),
+                                    "dropped_parallel_calls": e.attrs.get("dropped_parallel_calls") or 0,
                                     "result": res.attrs if res else None},
                              evidence=[e.event_id] + ([res.event_id] if res else [])))
             if e.model_call_id:
@@ -255,27 +256,37 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
         pg.add_edge(Edge(src=f"process:{g}", dst=oid, relation=rel, status=status,
                          signals=sig, evidence=[e.event_id] + ([z.event_id] if z else [])))
 
-    # in-process effects of non-exec tool calls (e.g. http_get/write_file inside python.exe)
+    # in-process effects of non-exec tool calls (e.g. http_get/write_file inside python.exe).
+    # Each effect goes to one call. A call's window runs from just before it starts to its
+    # result, and never past the start of the session's next call, so calls a few ms apart
+    # (the scripted model) do not share effects. Inside the windows, a call whose trace claims
+    # the object wins.
     host_fx = [e for e in events if e.action in HOST_EFFECTS and effect_guid.get(e.event_id)]
-    for tcid, call in tool_calls.items():
-        s = sessions.get(call.session_id or "")
-        if not s or not s.runtime_guid:
+    for s in sessions.values():
+        if not s.runtime_guid:
             continue
-        res = tool_results.get(tcid)
-        off = s.clock_offset
-        lo, hi = call.ts() + off - 0.5, (res.ts() if res else call.ts() + 30) + off + 0.5
-        claimed = _claimed_objects(res)
+        calls = sorted((c for c in tool_calls.values() if (c.session_id or "") == s.session_id),
+                       key=lambda c: c.ts())
+        windows = in_process_windows(calls, tool_results, s.clock_offset)
+        claimed = {c.tool_call_id: _claimed_objects(tool_results.get(c.tool_call_id)) for c in calls}
         for e in host_fx:
-            if effect_guid[e.event_id] != s.runtime_guid or not (lo <= e.ts() <= hi) or not e.object:
+            if effect_guid[e.event_id] != s.runtime_guid or not e.object:
                 continue
-            kind, rel = HOST_EFFECTS[e.action]
-            oid = _effect_node(pg, e, kind)
+            t = e.ts()
+            cands = [tc for tc, (lo, hi) in windows.items() if lo <= t <= hi]
+            if not cands:
+                continue
             names = [x.lower() for x in (e.object, e.attrs.get("dst_host")) if x]
-            match = any(c in n or n in c for c in claimed for n in names)
-            pg.add_edge(Edge(src=f"tool_call:{tcid}", dst=oid, relation=rel,
-                             status=C if match else I, confidence=0.9 if match else 0.5,
-                             signals={"in_process_effect": True, "trace_claim_match": match},
-                             evidence=[call.event_id, e.event_id]))
+            claimants = [tc for tc in cands
+                         if any(c in n or n in c for c in claimed[tc] for n in names)]
+            kind, rel = HOST_EFFECTS[e.action]
+            for tcid in claimants or cands[:1]:
+                match = tcid in claimants
+                oid = _effect_node(pg, e, kind)
+                pg.add_edge(Edge(src=f"tool_call:{tcid}", dst=oid, relation=rel,
+                                 status=C if match else I, confidence=0.9 if match else 0.5,
+                                 signals={"in_process_effect": True, "trace_claim_match": match},
+                                 evidence=[tool_calls[tcid].event_id, e.event_id]))
 
     # DNS answers -> network endpoints
     for e in events:
@@ -285,12 +296,71 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
                     if n.attrs.get("ip") == ip:
                         pg.add_edge(Edge(src=f"domain:{e.object.lower()}", dst=n.id, relation="resolved_to",
                                          status=O, evidence=[e.event_id]))
+    # v0.5: logon sessions of the processes in the graph (Sysmon/4688 LogonId, 4624 logon type)
+    logon_type = {e.logon_id.lower(): e for e in events
+                  if e.action == Action.LOGON and e.logon_id}
+    for guid in in_graph:
+        lid = (pidx.by_guid[guid].logon_id or "").lower()
+        if not lid:
+            continue
+        lo_ev = logon_type.get(lid)
+        nid = pg.add_node(Node(id=f"logon:{lid}", kind=NodeKind.LOGON_SESSION, label=f"logon {lid}",
+                               attrs={"logon_id": lid,
+                                      "logon_type": lo_ev.attrs.get("logon_type") if lo_ev else None},
+                               evidence=[lo_ev.event_id] if lo_ev else []))
+        pg.add_edge(Edge(src=nid, dst=f"process:{guid}", relation="hosts", status=O,
+                         evidence=[pidx.by_guid[guid].event_id]))
+
+    # v0.5: file inventory (collect-run.ps1): size and content hash of files in the graph, and
+    # the content itself as a data object, so the same secret can be followed across copies
+    inventory = {file_id(e.object): e for e in events if e.action == Action.FILE_STAT and e.object}
+    pg.g.graph["inventory"] = {k: {"path": e.object, "size": e.attrs.get("size"),
+                                   "sha256": e.attrs.get("sha256"), "event": e.event_id}
+                               for k, e in inventory.items()}
+    for n in pg.nodes(NodeKind.FILE):
+        inv = inventory.get(n.id)
+        if not inv:
+            continue
+        n.attrs.setdefault("size", inv.attrs.get("size"))
+        n.attrs["sha256"] = inv.attrs.get("sha256")
+        n.evidence = sorted(set(n.evidence) | {inv.event_id})
+        if inv.attrs.get("sha256"):
+            did = pg.add_node(Node(id=f"data:{inv.attrs['sha256']}", kind=NodeKind.DATA_OBJECT,
+                                   label=f"content {inv.attrs['sha256'][:12]}",
+                                   attrs={"sha256": inv.attrs["sha256"], "size": inv.attrs.get("size")},
+                                   evidence=[inv.event_id]))
+            pg.add_edge(Edge(src=n.id, dst=did, relation="holds", status=O, evidence=[inv.event_id]))
+
     # an edge to a node the evidence never defines leaves a bare placeholder: drop it
     pg.g.remove_nodes_from([n for n, d in pg.g.nodes(data=True) if "node" not in d])
     return pg
 
 
 # ---------------- helpers ----------------
+
+def in_process_windows(calls: list[CanonicalEvent], results: dict[str, CanonicalEvent],
+                       offset: float, margin: float = 0.5) -> dict[str, tuple[float, float]]:
+    """Host-clock time window per tool call, for effects inside the agent's own process.
+
+    calls must be one session's calls in time order. A window starts ``margin`` before the
+    call (but not before the previous window ends) and ends ``margin`` after its result (or
+    30 s after the call without one), cut at the start of the next call."""
+    out: dict[str, tuple[float, float]] = {}
+    prev_hi = None
+    for i, call in enumerate(calls):
+        res = results.get(call.tool_call_id)
+        lo = call.ts() + offset - margin
+        if prev_hi is not None:
+            lo = max(lo, prev_hi)
+        hi = (res.ts() if res else call.ts() + 30) + offset + margin
+        if i + 1 < len(calls):
+            hi = min(hi, calls[i + 1].ts() + offset)
+        hi = max(hi, lo)
+        out[call.tool_call_id] = (lo, hi)
+        prev_hi = hi
+    return out
+
+
 def _effect_guids(events: list[CanonicalEvent], pidx: ProcessIndex) -> dict[str, str]:
     """event_id -> ProcessGuid of the acting process, for every host-effect event."""
     out = {}

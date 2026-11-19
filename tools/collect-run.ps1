@@ -177,12 +177,46 @@ if ($Kape) {
   Warn "no -Kape: `$MFT and `$UsnJrnl:`$J were not collected"
 }
 
+# 7b. file inventory: size and SHA-256 of the files in the scenario folders. Event logs say a
+# file was read or written but not how big it is; impact assessment needs the size to call an
+# upload confirmed, and without -Kape there is no $MFT to take it from.
+$invRoots = @("project", "secrets", "Documents", "Downloads", "Desktop", "AppData\Local\ptir-lab",
+              "AppData\Local\Temp\ptir-lab") | ForEach-Object { Join-Path $userHome $_ } |
+            Where-Object { Test-Path $_ }
+$invFiles = @()
+foreach ($root in $invRoots) {
+  Get-ChildItem -Path $root -File -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 2000 | ForEach-Object {
+    $hash = if ($_.Length -le 50MB) { (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName -ErrorAction SilentlyContinue).Hash } else { $null }
+    $invFiles += [ordered]@{ path = $_.FullName; size = $_.Length; sha256 = $hash
+                             created_utc = $_.CreationTimeUtc.ToString("o"); modified_utc = $_.LastWriteTimeUtc.ToString("o") }
+  }
+}
+$inventory = [ordered]@{ collected_utc = (Get-Date).ToUniversalTime().ToString("o"); roots = @($invRoots); files = $invFiles }
+[IO.File]::WriteAllText((Join-Path $Ev "file_inventory.json"), ($inventory | ConvertTo-Json -Depth 4),
+                        (New-Object Text.UTF8Encoding($false)))
+Write-Host "file inventory: $($invFiles.Count) files under $($invRoots.Count) folders"
+
 # 8. memory image (last, so collection activity above is visible in it)
 if ($WinPmem -and -not $NoMemory) {
   $memDir = Join-Path $Ev "memory"
   New-Item -ItemType Directory -Force -Path $memDir | Out-Null
-  & $WinPmem (Join-Path $memDir "memory.raw") | Out-Null
-  if ($LASTEXITCODE -ne 0) { Warn "WinPmem exited with $LASTEXITCODE" }
+  # A local model server holding most of the VM's RAM left WinPmem with an empty (jt-04) or
+  # partial (cy-04) image in the v0.4 lab runs: stop it before collecting.
+  $llama = Get-Process -Name "llama-server" -ErrorAction SilentlyContinue
+  if ($llama) { Warn "llama-server is still running (PID $($llama.Id -join ', ')): stop it (Ctrl+C in window M) before -Phase Stop, or the memory image may be empty or partial" }
+  $memFile = Join-Path $memDir "memory.raw"
+  & $WinPmem $memFile | Out-Null
+  $pmemExit = $LASTEXITCODE
+  $ramBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+  $imgBytes = if (Test-Path $memFile) { (Get-Item $memFile).Length } else { 0 }
+  if ($imgBytes -eq 0) {
+    Warn "memory image is EMPTY (0 bytes, WinPmem exit $pmemExit): memory evidence for this run is missing"
+  } elseif ($imgBytes -lt 0.9 * $ramBytes) {
+    Warn ("memory image is short: {0:N1} GB for {1:N1} GB of RAM (WinPmem exit $pmemExit)" -f ($imgBytes / 1GB), ($ramBytes / 1GB))
+  } elseif ($pmemExit -ne 0) {
+    # WinPmem mini exits 1 on most Windows 11 builds while still writing a complete image
+    Write-Host ("WinPmem exited with $pmemExit; image {0:N2} GB looks complete" -f ($imgBytes / 1GB))
+  }
 } elseif (-not $NoMemory) {
   Warn "no -WinPmem: take a hypervisor memory snapshot and copy it to evidence\memory\"
 }
@@ -196,6 +230,7 @@ function Get-Kind([string]$rel) {
     "powershell.jsonl"          { return "powershell" }
     "*.evtx"                    { return "evtx_raw" }
     "consolehost_history.txt"   { return "psreadline" }
+    "file_inventory.json"       { return "file_inventory" }
     "zeek\conn.log"             { return "zeek_conn" }
     "zeek\dns.log"              { return "zeek_dns" }
     "zeek\http.log"             { return "zeek_http" }

@@ -31,6 +31,7 @@ class EventSource(str, Enum):
     JUMPLIST = "jumplist"
     SHELLBAGS = "shellbags"
     MEMORY = "memory"
+    INVENTORY = "inventory"        # v0.5: file inventory written by collect-run.ps1
 
 
 class Action(str, Enum):
@@ -70,6 +71,7 @@ class Action(str, Enum):
     MEM_PROCESS = "mem_process"        # Volatility pslist / pstree
     MEM_CMDLINE = "mem_cmdline"        # Volatility cmdline
     MEM_CONN = "mem_conn"              # Volatility netscan
+    FILE_STAT = "file_stat"            # v0.5: size and hash of a file at collection time
 
 
 class EdgeStatus(str, Enum):
@@ -137,6 +139,8 @@ class NodeKind(str, Enum):
     REGISTRY = "registry"
     NETWORK = "network"
     DOMAIN = "domain"
+    LOGON_SESSION = "logon_session"    # v0.5: Windows logon session (4624 / LogonId)
+    DATA_OBJECT = "data_object"        # v0.5: file content, identified by its SHA-256
 
 
 class Node(BaseModel):

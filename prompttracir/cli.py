@@ -64,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("analyze", help="correlate, build graph, run rules, traceback, impact")
     p.add_argument("case")
     p.add_argument("--replay-url"); p.add_argument("--replay-model"); p.add_argument("--samples", type=int, default=3)
+    p.add_argument("--localizer", default="auto", choices=["auto", "segment", "heuristic", "replay", "group"],
+                   help="traceback method (default auto: replay with --replay-url, else segment)")
     p.add_argument("--llm-url"); p.add_argument("--llm-model")
     p.add_argument("--config", help="attribution settings JSON (only the keys you change; see `ptir config`)")
     p.add_argument("--without", action="append", metavar="KIND", default=[],
@@ -83,7 +85,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("eval-batch", help="score every analysed run under ROOT and aggregate")
     p.add_argument("root", help="folder of runs: ROOT/<run>/ground_truth.json and ROOT/<run>/case/")
-    p.add_argument("--out", help="write results.json and per_run.csv here (default: ROOT/results)")
+    p.add_argument("--out", help="write results.json and per_run.csv here (default: ROOT/results); "
+                                  "an ablation or --tag goes to OUT/<tag>/")
     p.add_argument("--case-name", default="case")
     p.add_argument("--reviewed-only", action="store_true", help="skip runs whose labels were not reviewed")
     p.add_argument("--families", help="only these scenario families (comma-separated), e.g. the training split")
@@ -93,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--without", action="append", metavar="KIND", default=[],
                    help="ablation: leave this evidence kind out when re-analysing; repeat for several")
     p.add_argument("--tag", help="output/TAG/ for the re-analysis (default: derived from --without)")
+    p.add_argument("--localizer", choices=["auto", "segment", "heuristic", "replay", "group"],
+                   help="re-analyse with this traceback method (e.g. heuristic, the v0.1 baseline)")
 
     a = ap.parse_args(argv)
 
@@ -179,7 +184,8 @@ def main(argv: list[str] | None = None) -> int:
             cfg = config_mod.load(a.config)
             res = analyze(Case(a.case), replayer, llm, a.samples, config=cfg, without=a.without,
                           tag=a.tag or (None if not a.without else
-                                        "without-" + "-".join(sorted(a.without)).replace("_", "")))
+                                        "without-" + "-".join(sorted(a.without)).replace("_", "")),
+                          localizer=a.localizer)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
@@ -202,7 +208,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ground truth not found: {a.ground_truth}" + _msys_hint(a.ground_truth), file=sys.stderr)
             return 2
         gt = json.loads(Path(a.ground_truth).read_text(encoding="utf-8-sig"))
-        print(json.dumps(evaluate_case(Case(a.case), gt), indent=2))
+        sc_path = Path(a.ground_truth).parent / "scenario.json"
+        payload = None
+        if sc_path.exists():
+            payload = (json.loads(sc_path.read_text(encoding="utf-8-sig")).get("injection") or {}).get("payload")
+        print(json.dumps(evaluate_case(Case(a.case), gt, payload=payload), indent=2))
     elif a.cmd == "eval-batch":
         from .batch import evaluate_runs, find_runs, summary_lines, write_report
         runs = find_runs(a.root, a.case_name)
@@ -215,12 +225,14 @@ def main(argv: list[str] | None = None) -> int:
             cfg = config_mod.load(a.config) if a.config else None
             report = evaluate_runs(runs, a.case_name, a.reviewed_only, families=split(a.families),
                                    exclude_families=split(a.exclude_families), reanalyze=a.reanalyze,
-                                   config=cfg, without=a.without, tag=a.tag)
+                                   config=cfg, without=a.without, tag=a.tag, localizer=a.localizer)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
         tag = report["condition"]["tag"]
-        j, c = write_report(report, a.out or Path(a.root) / "results" / (tag or ""))
+        # every condition gets its own folder, also under --out, so an ablation never
+        # overwrites the full-evidence results.json
+        j, c = write_report(report, Path(a.out or Path(a.root) / "results") / (tag or ""))
         print("\n".join(summary_lines(report)))
         print(f"\nwrote {j} and {c}")
     return 0

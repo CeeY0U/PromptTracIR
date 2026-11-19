@@ -62,3 +62,36 @@ def test_escaped_path_outside_scope_is_still_flagged():
 def test_sibling_folder_with_same_prefix_is_outside():
     assert not _under("C:\\Users\\lab\\projectX\\a.txt", [PROJECT])
     assert _under("c:\\users\\LAB\\Project", [PROJECT])
+
+
+def _runtime_graph(relation: str, kind: NodeKind, attrs: dict, status: EdgeStatus) -> ProvGraph:
+    """A non-exec tool call (Claude Code WebFetch/Read) with one in-process effect of the runtime."""
+    pg = ProvGraph()
+    pg.add_node(Node(id="tool_call:t1", kind=NodeKind.TOOL_CALL, label="WebFetch(http://docs...)",
+                     attrs={"ts": "2026-11-18T02:00:00+00:00", "args": {"url": "http://docs.example-lab.test/guide.html"}},
+                     evidence=["trace:x:3"]))
+    pg.add_node(Node(id="obj", kind=kind, label=attrs.get("path") or attrs.get("ip"), attrs=attrs, evidence=[]))
+    pg.add_edge(Edge(src="tool_call:t1", dst="obj", relation=relation, status=status, evidence=["sysmon:x:9"]))
+    return pg
+
+
+def test_unclaimed_in_process_connection_is_not_egress():
+    # v0.5: Claude Code's own API traffic during a WebFetch window, seen by Sysmon as a bare IP
+    pg = _runtime_graph("connected", NodeKind.NETWORK, {"ip": "160.79.104.10", "host": ""}, EdgeStatus.INFERRED)
+    assert run_rules(pg, ENVELOPE) == []
+
+
+def test_claimed_in_process_connection_is_still_egress():
+    pg = _runtime_graph("connected", NodeKind.NETWORK, {"ip": "192.168.56.11", "host": "collect.attacker-lab.test"},
+                        EdgeStatus.CORROBORATED)
+    pg.node("obj").attrs["ip"] = "203.0.113.5"     # external address, so the rule applies
+    assert [f.kind for f in run_rules(pg, ENVELOPE)] == ["external_egress"]
+
+
+def test_runtime_state_is_not_a_sensitive_file_finding():
+    cred = "C:\\Users\\lab\\.claude\\.credentials.json"
+    pg = _runtime_graph("wrote", NodeKind.FILE, {"path": cred}, EdgeStatus.INFERRED)
+    assert run_rules(pg, ENVELOPE) == []
+    other = "C:\\Users\\lab\\secrets\\api_keys.txt"     # an unclaimed write to a real secret still counts
+    pg = _runtime_graph("wrote", NodeKind.FILE, {"path": other}, EdgeStatus.INFERRED)
+    assert [f.kind for f in run_rules(pg, ENVELOPE)] == ["out_of_scope_file"]

@@ -37,6 +37,7 @@ DEFAULT_PATTERNS: list[tuple[str, str]] = [
     ("evidence/powershell.jsonl", "powershell"),
     ("evidence/*.evtx", "evtx_raw"),
     ("evidence/consolehost_history.txt", "psreadline"),
+    ("evidence/file_inventory.json", "file_inventory"),
     ("evidence/zeek/conn.log", "zeek_conn"),
     ("evidence/zeek/dns.log", "zeek_dns"),
     ("evidence/zeek/http.log", "zeek_http"),
