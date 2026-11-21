@@ -2,6 +2,20 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.5.1] - 2026-11-21
+
+Fix from the first v0.5.0 lab runs.
+
+### Fixed
+- The lab agent's shell tool mangled commands with double quotes on Windows: Python's
+  list2cmdline escaped them as \", which cmd.exe does not understand, so `file_change_01`'s
+  `cmd /c "echo backup=disabled> ..."` exited 1 without changing the file (lab run jt-v2). The
+  command line is now passed as one string; commands without quotes are unchanged, so earlier
+  runs stay comparable.
+- Tests: 151 -> 152.
+
+The lab VM needs v0.5.1 (the harness changed); analysis results of earlier runs do not change.
+
 ## [0.5.0] - 2026-11-17
 
 Roadmap v0.5 (causal reconstruction), the fixes from the 14 v0.4 lab runs, and the dataset
