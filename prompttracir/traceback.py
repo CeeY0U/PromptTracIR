@@ -7,7 +7,9 @@ an INFERRED "influenced" edge fragment -> tool_call; spans are kept in the edge'
   segment    (default without a model) PromptLocate-style: split each fragment into sentences,
              score each sentence for instruction cues and for carrying the tool call's own
              command, URL or path, and return the run of sentences that scored. Model-free.
-  heuristic  the v0.1 baseline: instruction cues over the whole fragment.
+  heuristic  cue-only baseline: instruction cues over the whole fragment.
+  heuristic-v01  the same with the v0.1 cue list, frozen (v0.6): the report's baseline, since
+             the current list gained cues from the lab payloads in v0.5.
   replay     counterfactual leave-one-out (AttriGuard / TracLLM-style): re-send the recorded
              model request with one fragment removed and check whether the tool call survives.
              Needs requests.jsonl and the same model.
@@ -45,8 +47,20 @@ INSTRUCTION_CUES = [
 ]
 
 
-def heuristic_score(text: str) -> float:
-    hits = sum(1 for p in INSTRUCTION_CUES if re.search(p, text, re.I))
+# v0.6: the v0.1 cue set, frozen, as the report's cue-only baseline (`--localizer heuristic-v01`).
+# The list above grew in v0.5 with cues taken from the lab payloads, so a baseline built on it is
+# no longer independent of the test data.
+INSTRUCTION_CUES_V01 = [
+    r"\bignore (all |any )?(previous|prior|above)\b", r"\b(you|assistant|ai|agent) (must|should|need to)\b",
+    r"\bimportant\b", r"\binstead\b", r"\bdo not (tell|mention|inform)\b", r"\bsystem( prompt)?:",
+    r"\b(run|execute) (the following|this)\b", r"\b(send|upload|post|exfiltrate|forward)\b",
+    r"\bcurl\b|\binvoke-webrequest\b|\biwr\b", r"https?://", r"\bbefore (you|continuing|answering)\b",
+    r"<\|.*?\|>|</?(system|instructions?)>", r"\b(secret|password|token|credential|\.ssh|api key)s?\b",
+]
+
+
+def heuristic_score(text: str, cues: list[str] | None = None) -> float:
+    hits = sum(1 for p in (cues or INSTRUCTION_CUES) if re.search(p, text, re.I))
     return round(min(1.0, hits / 4.0), 3)
 
 
@@ -115,11 +129,14 @@ def target_match(text: str, target: dict) -> float:
 class HeuristicLocalizer:
     name = "heuristic"
 
+    def __init__(self, cues: list[str] | None = None, method: str = "heuristic_localizer"):
+        self.cues, self.method = cues, method
+
     def localize(self, target, fragments, request=None):
         out = []
         for fid, text in fragments.items():
-            s = heuristic_score(text)
-            out.append(Localization(fid, s, [(0, len(text), s)] if s else [], "heuristic_localizer"))
+            s = heuristic_score(text, self.cues)
+            out.append(Localization(fid, s, [(0, len(text), s)] if s else [], self.method))
         return out
 
 
@@ -373,6 +390,7 @@ def run_traceback(pg: ProvGraph, tool_calls: list[str], requests: dict[str, dict
             m = "segment"
         loc: Localizer = {"segment": lambda: SegmentLocalizer(),
                           "heuristic": lambda: HeuristicLocalizer(),
+                          "heuristic-v01": lambda: HeuristicLocalizer(INSTRUCTION_CUES_V01, "heuristic_v01_localizer"),
                           "replay": lambda: ReplayLocalizer(replayer, samples, surrogate),
                           "group": lambda: GroupSearchLocalizer(replayer, samples, surrogate)}[m]()
         results = loc.localize(target, frags, req)

@@ -24,6 +24,8 @@ from pathlib import Path
 
 from .case import Case
 
+LOCALIZERS = ["auto", "segment", "heuristic", "heuristic-v01", "replay", "group"]
+
 
 CASE_COMMANDS = {"add", "import-adfir", "ingest", "analyze", "verify", "serve", "eval"}
 
@@ -64,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("analyze", help="correlate, build graph, run rules, traceback, impact")
     p.add_argument("case")
     p.add_argument("--replay-url"); p.add_argument("--replay-model"); p.add_argument("--samples", type=int, default=3)
-    p.add_argument("--localizer", default="auto", choices=["auto", "segment", "heuristic", "replay", "group"],
+    p.add_argument("--localizer", default="auto", choices=LOCALIZERS,
                    help="traceback method (default auto: replay with --replay-url, else segment)")
     p.add_argument("--llm-url"); p.add_argument("--llm-model")
     p.add_argument("--config", help="attribution settings JSON (only the keys you change; see `ptir config`)")
@@ -96,8 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--without", action="append", metavar="KIND", default=[],
                    help="ablation: leave this evidence kind out when re-analysing; repeat for several")
     p.add_argument("--tag", help="output/TAG/ for the re-analysis (default: derived from --without)")
-    p.add_argument("--localizer", choices=["auto", "segment", "heuristic", "replay", "group"],
-                   help="re-analyse with this traceback method (e.g. heuristic, the v0.1 baseline)")
+    p.add_argument("--localizer", choices=LOCALIZERS,
+                   help="re-analyse with this traceback method (heuristic-v01: the v0.1 cue-only baseline)")
 
     a = ap.parse_args(argv)
 

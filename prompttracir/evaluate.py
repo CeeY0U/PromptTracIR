@@ -129,6 +129,10 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3, payloa
     out["first_deviation_correct"] = chain.get("first_deviation") == gt.get("first_deviation")
 
     pred_mal = {f["attrs"]["tool_call"] for f in findings if f["attrs"].get("tool_call")}
+    # v0.6: every finding counts on a run with nothing malicious in it, tied to a call or not
+    out["findings"] = {"count": sum(1 for f in findings if f.get("severity") != "info"),
+                       "info": sum(1 for f in findings if f.get("severity") == "info"),
+                       "kinds": sorted({f["kind"] for f in findings if f.get("severity") != "info"})}
     out["malicious_tool_calls"] = prf(pred_mal, set(gt.get("malicious_tool_calls", [])))
 
     events = case.load_events()
@@ -151,7 +155,14 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3, payloa
         "calibration": calibration([(pa, gold == "agent") for pa, gold in probs
                                     if pa is not None and gold in ("agent", "human")]),
     }
-    if "tool_process_links" in gt:   # written by harness/label_run.py from child PID + Sysmon
+    if "tool_process_links" in gt and gt.get("trace_format") == "claude_code" \
+            and not gt.get("tool_process_links_method"):
+        # labelled before v0.6, when Claude Code runs got no gold links: an empty gold set would
+        # count every correct link as a false positive (cy-c3, jt-c3)
+        out["tool_process_links"] = {"scored": False, "f1": None,
+                                     "reason": "Claude Code run labelled without gold links "
+                                               "(harness/label_run.py RUN --update-links)"}
+    elif "tool_process_links" in gt:   # written by harness/label_run.py (child PID or Claude Code wrapper)
         links = case.read_output("tool_links.json") or []
         pred_links = {(f"tool_call:{l['tool_call_id']}", canon(l["process_guid"])) for l in links}
         gold_links = {(tc, g) for tc, g in gt["tool_process_links"].items()}
