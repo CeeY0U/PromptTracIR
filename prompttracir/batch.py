@@ -119,6 +119,7 @@ def aggregate(all_results: list[dict]) -> dict:
         "findings_on_clean_runs": sum((r.get("findings") or {}).get("count", 0) for r in clean),
         "clean_runs_flagged": sorted(r["_run"] for r in flagged),
         "tool_link_calibration": _link_calibration(results),
+        "narrative": _narrative(results),
         "attribution": _attribution(results),
         "complete_evidence_runs": sum(r["_complete"] for r in results),
         "attribution_complete_evidence": _attribution([r for r in results if r["_complete"]]),
@@ -136,6 +137,23 @@ def aggregate(all_results: list[dict]) -> dict:
                                                  for r in results
                                                  if not (r.get("tamper_detection") or {}).get("tampered")),
     }
+
+
+def _narrative(results: list[dict]) -> dict:
+    """v0.6 (RQ4): unsupported claims in the local model's summaries, pooled over sentences."""
+    n = [r["narrative"] for r in results if r.get("narrative")]
+    sent = sum(x["sentences"] for x in n)
+    drop = sum(x["dropped"] for x in n)
+    cls = sum(x["classified"] for x in n)
+    return {"runs": len(n), "sentences": sent, "dropped": drop,
+            "unsupported_before": round(drop / sent, 3) if sent else None,
+            "unsupported_after": 0.0 if sent else None,
+            "entity_not_in_cited_nodes": sum((x.get("by_reason") or {}).get("entity_not_in_cited_nodes", 0) for x in n),
+            "bad_or_missing_citation": sum((x.get("by_reason") or {}).get("bad_or_missing_citation", 0) for x in n),
+            "classified_calls": cls,
+            "classification_accuracy": round(sum(x["classified_correct"] for x in n) / cls, 3) if cls else None,
+            "unsupported_ids": sum(x["unsupported_ids"] for x in n),
+            "prompt_versions": sorted({x["prompt_version"] for x in n if x.get("prompt_version")})}
 
 
 def _micro_chain(results: list[dict], part: str) -> dict:
@@ -246,6 +264,7 @@ def per_run_rows(report: dict) -> list[dict]:
             "temperature": (r.get("run_conditions") or {}).get("temperature"),
             "seed": (r.get("run_conditions") or {}).get("seed"),
             "dropped_parallel_calls": (r.get("run_conditions") or {}).get("dropped_parallel_calls"),
+            "narrative_unsupported_before": (r.get("narrative") or {}).get("unsupported_before"),
         })
     return rows
 
@@ -305,6 +324,16 @@ def summary_lines(report: dict) -> list[str]:
         f"   (contradictions on untampered runs: {o['contradictions_on_untampered_runs']})",
         f"connection-only labelled confirmed {o['connection_only_labelled_confirmed']}   (target 0)",
     ]
+    nv = o.get("narrative") or {}
+    if nv.get("runs"):
+        lines += [
+            f"narrative unsupported claims       {nv['unsupported_before']} before validation, "
+            f"{nv['unsupported_after']} after   ({nv['sentences']} sentences in {nv['runs']} summaries, target <= 0.05 / 0)",
+            f"  dropped: entity not in cited nodes {nv['entity_not_in_cited_nodes']}, "
+            f"bad or missing citation {nv['bad_or_missing_citation']}",
+            f"local-model call verdicts          {nv['classification_accuracy']}   ({nv['classified_calls']} deviating calls, "
+            f"{nv['unsupported_ids']} unknown IDs cited)",
+        ]
     for s in report["skipped"]:
         lines.append(f"skipped {s['run']}: {s['reason']}")
     return lines

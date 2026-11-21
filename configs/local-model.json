@@ -1,0 +1,25 @@
+{
+  "_note": "The local model used for the lab agent's real runs and for PromptTracIR's local-model analysis (v0.6). Every llm.json records this pin and the model id the server reported; `ptir explain` warns when they differ. Fill in sha256 once on the lab VM: Get-FileHash C:\\tools\\llama\\model.gguf",
+  "model": {
+    "name": "Qwen2.5-7B-Instruct",
+    "quantisation": "Q4_K_M",
+    "source": "Qwen/Qwen2.5-7B-Instruct-GGUF, qwen2.5-7b-instruct-q4_k_m.gguf",
+    "file": "model.gguf",
+    "sha256": null
+  },
+  "server": {
+    "program": "llama.cpp llama-server",
+    "command": "llama-server -m \"C:\\tools\\llama\\model.gguf\" --port 8080 --jinja -t 4",
+    "base_url": "http://127.0.0.1:8080"
+  },
+  "sampling": {
+    "temperature": 0,
+    "seed": 1234,
+    "max_tokens": 1024
+  },
+  "lab_agent": {
+    "temperature": 0.7,
+    "max_tokens": 1024,
+    "seeds_used": [2, 3, 4, 5]
+  }
+}

@@ -14,6 +14,9 @@
   ptir eval CASE GROUND_TRUTH.json
   ptir eval-batch ROOT [--out DIR] [--reviewed-only] [--families F,...] [--exclude-families F,...]
                        [--reanalyze] [--config FILE] [--without KIND ...] [--tag NAME]
+  ptir explain CASE_OR_ROOT --llm-url URL [--llm-model M] [--tag NAME] [--families F,...]
+                       (v0.6: local-model verdicts and grounded summary of analysed cases)
+  ptir llm-pin                                   (print the pinned local model and server settings)
 """
 from __future__ import annotations
 
@@ -100,6 +103,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tag", help="output/TAG/ for the re-analysis (default: derived from --without)")
     p.add_argument("--localizer", choices=LOCALIZERS,
                    help="re-analyse with this traceback method (heuristic-v01: the v0.1 cue-only baseline)")
+
+    p = sub.add_parser("explain", help="local-model verdicts and grounded summary for analysed case(s)")
+    p.add_argument("target", help="a case directory, or a folder of runs (ROOT/<run>/case)")
+    p.add_argument("--llm-url", required=True, help="OpenAI-compatible server, e.g. http://127.0.0.1:8080")
+    p.add_argument("--llm-model", default="local")
+    p.add_argument("--tag", help="explain output/TAG/ instead of output/")
+    p.add_argument("--case-name", default="case")
+    p.add_argument("--families", help="only runs of these families (comma-separated): the training split")
+
+    sub.add_parser("llm-pin", help="print the pinned local model and server settings (configs/local-model.json)")
 
     a = ap.parse_args(argv)
 
@@ -192,6 +205,12 @@ def main(argv: list[str] | None = None) -> int:
             print(e, file=sys.stderr)
             return 2
         print(json.dumps(res, indent=2))
+    elif a.cmd == "explain":
+        return _explain(a)
+    elif a.cmd == "llm-pin":
+        from .llm import PIN_FILE, load_pin
+        print(f"# {PIN_FILE}")
+        print(json.dumps(load_pin(), indent=2))
     elif a.cmd == "config":
         from . import config as config_mod
         print(json.dumps(config_mod.DEFAULTS, indent=2))
@@ -242,3 +261,44 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _explain(a) -> int:
+    from .batch import find_runs
+    from .llm import LocalLLM
+    from .pipeline import explain
+    target = Path(a.target)
+    if (target / "case.json").exists():
+        cases = [(target.name, target)]
+    else:
+        fams = set(a.families.split(",")) if a.families else None
+        cases = []
+        for run in find_runs(target, a.case_name):
+            gt = json.loads((run / "ground_truth.json").read_text(encoding="utf-8-sig"))
+            if fams and gt.get("family") not in fams:
+                continue
+            cases.append((run.name, run / a.case_name))
+    if not cases:
+        print(f"no analysed case under {target}", file=sys.stderr)
+        return 2
+    llm = LocalLLM(a.llm_url, a.llm_model)
+    served = llm.served_model()
+    pinned = (llm.pin.get("model") or {}).get("file")
+    print(f"server model: {served}   pinned: {pinned}")
+    if served and pinned and pinned.lower() not in served.lower():
+        print("warning: the server is not running the pinned model file", file=sys.stderr)
+    sent = drop = 0
+    for name, c in cases:
+        try:
+            rec = explain(Case(c), llm, tag=a.tag)
+        except ValueError as e:
+            print(f"{name}: {e}", file=sys.stderr)
+            continue
+        s = rec.get("summary") or {}
+        sent += s.get("sentences", 0)
+        drop += len(s.get("dropped") or [])
+        print(f"{name:28} calls {len(rec['classifications'])}  sentences {s.get('sentences', 0)}  "
+              f"unsupported before {s.get('unsupported_rate_before_validation')}  ({llm.schema_mode})")
+    if sent:
+        print(f"all: {drop} of {sent} sentences unsupported before validation ({drop / sent:.3f}), 0 after")
+    return 0

@@ -122,7 +122,11 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
     out.write_output("findings.json", [f.model_dump(mode="json") for f in findings])
     out.write_output("traceback.json", tb_log)
     out.write_output("impact.json", impact)
-    out.write_output("llm.json", {"classifications": llm_out, "summary": summary})
+    llm_rec = {"classifications": llm_out, "summary": summary}
+    if llm is not None:
+        from .llm import run_record
+        llm_rec["run"] = run_record(llm)
+    out.write_output("llm.json", llm_rec)
     out.write_output("chain.json", chain)
     out.write_output("crosscheck.json", cc_log)
     keep = set(chain["nodes"])
@@ -166,3 +170,26 @@ def attack_chain(pg: ProvGraph, first: str | None, findings) -> dict:
     nodes |= {s for f in influenced_src for s in pg.g.predecessors(f) if pg.node(s).kind == NodeKind.SOURCE}
     return {"first_deviation": first, "entry_points": entries, "nodes": sorted(nodes),
             "generated": datetime.now(timezone.utc).isoformat()}
+
+
+def explain(case: Case, llm, tag: str | None = None) -> dict:
+    """Run only the local-model layer (v0.6) on an analysed case: classify each deviating tool
+    call and write the grounded summary of the attack chain into llm.json. The graph, findings
+    and chain on disk are read, not changed, so this can be repeated with another model or
+    prompt without re-analysing the case."""
+    from .llm import classify_tool_call, run_record, summarize
+    out = case.view(tag) if tag else case
+    graph = out.read_output("graph.json")
+    if graph is None:
+        raise ValueError(f"{case.root}: not analysed (run ptir analyze first)")
+    pg = ProvGraph.from_json(graph)
+    findings = out.read_output("findings.json") or []
+    chain = out.read_output("chain.json") or {}
+    deviating = sorted({f["attrs"]["tool_call"] for f in findings if (f.get("attrs") or {}).get("tool_call")})
+    classifications = [classify_tool_call(pg, tc, llm) for tc in deviating if tc in pg.g]
+    summary = summarize(pg, set(chain.get("nodes") or []), llm) if chain.get("nodes") else None
+    rec = {"classifications": classifications, "summary": summary, "run": run_record(llm)}
+    out.write_output("llm.json", rec)
+    case._custody("explained", {"tag": tag, "classified": len(classifications),
+                                "summary_sentences": (summary or {}).get("sentences", 0)})
+    return rec
