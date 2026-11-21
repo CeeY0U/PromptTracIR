@@ -159,7 +159,7 @@ def evaluate_case(case: Case, gt: dict, influence_threshold: float = 0.3, payloa
             and not gt.get("tool_process_links_method"):
         # labelled before v0.6, when Claude Code runs got no gold links: an empty gold set would
         # count every correct link as a false positive (cy-c3, jt-c3)
-        out["tool_process_links"] = {"scored": False, "f1": None,
+        out["tool_process_links"] = {"not_scored": True, "f1": None, "scored": [],
                                      "reason": "Claude Code run labelled without gold links "
                                                "(harness/label_run.py RUN --update-links)"}
     elif "tool_process_links" in gt:   # written by harness/label_run.py (child PID or Claude Code wrapper)

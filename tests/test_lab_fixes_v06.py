@@ -226,7 +226,7 @@ def test_gold_links_for_claude_code_come_from_the_wrapper():
 def test_claude_code_links_not_scored_without_gold_links(tmp_path):
     case = _cc_case(tmp_path)
     gt = {"trace_format": "claude_code", "tool_process_links": {}, "malicious_tool_calls": []}
-    assert evaluate_case(case, gt)["tool_process_links"]["scored"] is False
+    assert evaluate_case(case, gt)["tool_process_links"]["not_scored"] is True
     gt["tool_process_links_method"] = "claude_code_wrapper"
     assert evaluate_case(case, gt)["tool_process_links"]["precision"] == 0.0     # a link, no gold
 
