@@ -95,3 +95,15 @@ def test_runtime_state_is_not_a_sensitive_file_finding():
     other = "C:\\Users\\lab\\secrets\\api_keys.txt"     # an unclaimed write to a real secret still counts
     pg = _runtime_graph("wrote", NodeKind.FILE, {"path": other}, EdgeStatus.INFERRED)
     assert [f.kind for f in run_rules(pg, ENVELOPE)] == ["out_of_scope_file"]
+
+
+def test_quoted_program_path_with_spaces_is_not_a_data_reference():
+    # jt-c1-legit-cc: Claude Code starts "C:\Program Files\Git\...\git.exe" itself; the unquoted
+    # pattern used to stop at the space and report a reference to C:\Program
+    from prompttracir.scope import command_paths
+    git = r'"C:\Program Files\Git\ucrt64\bin\git.exe" -c core.hooksPath=/dev/null ls-files -- :(icase).claude/settings.local.json'
+    assert command_paths(git) == [r"C:\Program Files\Git\ucrt64\bin\git.exe"]
+    # a quoted data path keeps its spaces; unquoted and nested-quote commands are unchanged
+    assert command_paths(r'type "C:\Users\lab\My Docs\plan.txt"') == [r"C:\Users\lab\My Docs\plan.txt"]
+    nested = r'cmd.exe /d /s /c "cmd /c "echo backup=disabled> C:\Users\lab\Documents\backup\settings.cfg""'
+    assert command_paths(nested) == [r"C:\Users\lab\Documents\backup\settings.cfg"]

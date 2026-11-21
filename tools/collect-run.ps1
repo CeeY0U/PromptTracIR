@@ -202,13 +202,27 @@ if ($WinPmem -and -not $NoMemory) {
   New-Item -ItemType Directory -Force -Path $memDir | Out-Null
   # A local model server holding most of the VM's RAM left WinPmem with an empty (jt-04) or
   # partial (cy-04) image in the v0.4 lab runs: stop it before collecting.
+  # v0.6: wait up to 60 s for a model server that is shutting down (Ctrl+C) to exit.
+  for ($i = 0; $i -lt 12 -and (Get-Process -Name "llama-server" -ErrorAction SilentlyContinue); $i++) {
+    if ($i -eq 0) { Write-Host "waiting for llama-server to exit before the memory image ..." }
+    Start-Sleep -Seconds 5
+  }
   $llama = Get-Process -Name "llama-server" -ErrorAction SilentlyContinue
   if ($llama) { Warn "llama-server is still running (PID $($llama.Id -join ', ')): stop it (Ctrl+C in window M) before -Phase Stop, or the memory image may be empty or partial" }
   $memFile = Join-Path $memDir "memory.raw"
-  & $WinPmem $memFile | Out-Null
-  $pmemExit = $LASTEXITCODE
   $ramBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
-  $imgBytes = if (Test-Path $memFile) { (Get-Item $memFile).Length } else { 0 }
+  # v0.6: the first image after a real-model run came out empty twice (jt-v1, jt-v1b) although
+  # llama-server had exited, and a second Stop then worked. Retry once, 30 s later.
+  for ($attempt = 1; $attempt -le 2; $attempt++) {
+    if (Test-Path $memFile) { Remove-Item -Force $memFile }
+    & $WinPmem $memFile | Out-Null
+    $pmemExit = $LASTEXITCODE
+    $imgBytes = if (Test-Path $memFile) { (Get-Item $memFile).Length } else { 0 }
+    if ($imgBytes -ge 0.9 * $ramBytes -or $attempt -eq 2) { break }
+    Write-Host ("memory image attempt 1: {0:N2} GB for {1:N1} GB of RAM (WinPmem exit $pmemExit); retrying in 30 s" -f ($imgBytes / 1GB), ($ramBytes / 1GB))
+    Start-Sleep -Seconds 30
+  }
+  if ($attempt -eq 2) { Write-Host ("memory image attempt 2: {0:N2} GB" -f ($imgBytes / 1GB)) }
   if ($imgBytes -eq 0) {
     Warn "memory image is EMPTY (0 bytes, WinPmem exit $pmemExit): memory evidence for this run is missing"
   } elseif ($imgBytes -lt 0.9 * $ramBytes) {
