@@ -14,8 +14,8 @@
   ptir eval CASE GROUND_TRUTH.json
   ptir eval-batch ROOT [--out DIR] [--reviewed-only] [--families F,...] [--exclude-families F,...]
                        [--reanalyze] [--config FILE] [--without KIND ...] [--tag NAME]
-  ptir explain CASE_OR_ROOT --llm-url URL [--llm-model M] [--tag NAME] [--families F,...]
-                       (v0.6: local-model verdicts and grounded summary of analysed cases)
+  ptir explain CASE_OR_ROOT --llm-url URL [--llm-model M] [--tag NAME] [--families F,...] [--timeout S]
+  ptir explain CASE_OR_ROOT --revalidate         (v0.7: re-check stored summaries, no model)
   ptir llm-pin                                   (print the pinned local model and server settings)
 """
 from __future__ import annotations
@@ -106,8 +106,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("explain", help="local-model verdicts and grounded summary for analysed case(s)")
     p.add_argument("target", help="a case directory, or a folder of runs (ROOT/<run>/case)")
-    p.add_argument("--llm-url", required=True, help="OpenAI-compatible server, e.g. http://127.0.0.1:8080")
+    p.add_argument("--llm-url", help="OpenAI-compatible server, e.g. http://127.0.0.1:8080")
     p.add_argument("--llm-model", default="local")
+    p.add_argument("--timeout", type=float, default=1800,
+                   help="seconds per model call (a CPU-only summary takes minutes; default 1800)")
+    p.add_argument("--revalidate", action="store_true",
+                   help="no model: check the stored summaries again with the current validation (v0.7)")
     p.add_argument("--tag", help="explain output/TAG/ instead of output/")
     p.add_argument("--case-name", default="case")
     p.add_argument("--families", help="only runs of these families (comma-separated): the training split")
@@ -259,8 +263,6 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
 
 
 def _explain(a) -> int:
@@ -281,7 +283,25 @@ def _explain(a) -> int:
     if not cases:
         print(f"no analysed case under {target}", file=sys.stderr)
         return 2
-    llm = LocalLLM(a.llm_url, a.llm_model)
+    if a.revalidate:
+        from .pipeline import revalidate_case
+        sent = drop = 0
+        for name, c in cases:
+            rec = revalidate_case(Case(c), tag=a.tag)
+            if rec is None:
+                continue
+            s, b = rec["summary"], rec["summary_before_revalidation"]
+            sent += s["sentences"]
+            drop += len(s["dropped"])
+            print(f"{name:28} sentences {s['sentences']}  dropped {len(s['dropped'])} (was "
+                  f"{b['sentences'] - b['kept'] if b.get('kept') is not None else '?'})  {s['unsupported_by_reason']}")
+        if sent:
+            print(f"all: {drop} of {sent} sentences unsupported before validation ({drop / sent:.3f}), 0 after")
+        return 0
+    if not a.llm_url:
+        print("--llm-url is required (or --revalidate)", file=sys.stderr)
+        return 2
+    llm = LocalLLM(a.llm_url, a.llm_model, timeout=a.timeout)
     served = llm.served_model()
     pinned = (llm.pin.get("model") or {}).get("file")
     print(f"server model: {served}   pinned: {pinned}")
@@ -291,8 +311,8 @@ def _explain(a) -> int:
     for name, c in cases:
         try:
             rec = explain(Case(c), llm, tag=a.tag)
-        except ValueError as e:
-            print(f"{name}: {e}", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 - one failed run (timeout, server error) does not stop the rest
+            print(f"{name}: FAILED {e!r}", file=sys.stderr)
             continue
         s = rec.get("summary") or {}
         sent += s.get("sentences", 0)
@@ -302,3 +322,7 @@ def _explain(a) -> int:
     if sent:
         print(f"all: {drop} of {sent} sentences unsupported before validation ({drop / sent:.3f}), 0 after")
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

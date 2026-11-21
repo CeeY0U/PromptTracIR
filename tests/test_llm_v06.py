@@ -47,12 +47,13 @@ class SchemaLLM:
         props = (schema or {}).get("properties", {})
         if "sentences" in props:
             ids = props["sentences"]["items"]["properties"]["cites"]["items"]["enum"]
-            tc = next(i for i in ids if i.startswith("tool_call:"))
-            frag = next(i for i in ids if i.startswith("fragment:"))
+            assert {"tool_call:t3", "fragment:f2"} <= set(ids)
             return json.dumps({"sentences": [
-                {"text": "A fetched page carried an injected instruction.", "cites": [frag]},
-                {"text": "The agent then ran a tool call that uploaded data.", "cites": [tc]},
-                {"text": "It also wiped C:\\Users\\lab\\backup.zip.", "cites": [tc]}]})
+                {"text": "A fetched page carried an injected instruction.", "cites": ["fragment:f2"]},
+                {"text": "The agent then ran a tool call that uploaded data.", "cites": ["tool_call:t3"]},
+                {"text": "It also wiped C:\\Users\\lab\\backup.zip.", "cites": ["tool_call:t3"]},
+                # v0.7: real names, wrong relation (t2 read the secret; t3 uploaded it)
+                {"text": "The read_file call t2 uploaded the secret.", "cites": ["tool_call:t2"]}]})
         frags = props["directing_fragments"]["items"]["enum"]
         return json.dumps({"directing_fragments": frags[-1:], "required_by_task": False,
                            "verdict": "injection_driven", "confidence": 0.9, "rationale": "x",
@@ -66,12 +67,16 @@ def test_schema_ids_are_enums_and_invented_entities_are_dropped(tmp_path, sample
     cls_schema = llm.schemas[0]
     assert "fragment:f2" in cls_schema["properties"]["directing_fragments"]["items"]["enum"]
     s = rec["summary"]
-    assert s["format"] == "structured" and s["sentences"] == 3 and s["kept"] == 2
-    d, = s["dropped"]
-    assert d["unsupported_entities"] == ["c:\\users\\lab\\backup.zip"]
-    assert s["unsupported_rate_before_validation"] == 0.333 and s["unsupported_rate_after_validation"] == 0.0
-    assert rec["run"]["prompt_version"] == "v0.6.0" and rec["run"]["pin"]["model"]["quantisation"] == "Q4_K_M"
+    assert s["format"] == "structured" and s["sentences"] == 4 and s["kept"] == 2
+    ent, rel = s["dropped"]
+    assert ent["unsupported_entities"] == ["c:\\users\\lab\\backup.zip"]
+    assert rel["unsupported_relations"] == ["'send' is not something the cited tool call or its processes did"]
+    assert s["unsupported_rate_before_validation"] == 0.5 and s["unsupported_rate_after_validation"] == 0.0
+    assert s["unsupported_by_reason"] == {"bad_or_missing_citation": 0, "entity_not_in_cited_nodes": 1,
+                                          "relation_not_in_graph": 1}
+    assert rec["run"]["prompt_version"] == "v0.7.0" and rec["run"]["pin"]["model"]["quantisation"] == "Q4_K_M"
     assert c.read_output("llm.json")["summary"]["kept"] == 2
+    assert len(c.read_output("llm.json")["summary"]["raw_sentences"]) == 4
     # the graph and findings on disk are not touched by explain
     assert all(e["relation"] != "influenced" or e["signals"].get("method") != "local_llm"
                for e in c.read_output("graph.json")["edges"])
@@ -82,13 +87,14 @@ def test_narrative_rates_reach_eval_batch(tmp_path, sample_dir):
     explain(c, SchemaLLM())
     gt = {"malicious_tool_calls": ["tool_call:t3"], "injected_fragments": ["fragment:f2"]}
     n = evaluate_case(c, gt)["narrative"]
-    assert n["sentences"] == 3 and n["dropped"] == 1 and n["classified"] >= 1
+    assert n["sentences"] == 4 and n["dropped"] == 2 and n["classified"] >= 1
     r = {"_run": "s", "_gt": {"malicious_tool_calls": ["tool_call:t3"], "first_deviation": "tool_call:t3"},
          "_pred_first": "tool_call:t3", "_complete": True, "findings": {"count": 2}, "first_deviation_correct": True,
          "injected_fragment_localization": {}, "malicious_tool_calls": {}, "attribution": {"rows": []},
          "impact": {}, "connection_only_labelled_confirmed": 0, "chain": {}, "narrative": n}
     o = aggregate([r])
-    assert o["narrative"]["unsupported_before"] == 0.333 and o["narrative"]["entity_not_in_cited_nodes"] == 1
+    assert o["narrative"]["unsupported_before"] == 0.5 and o["narrative"]["entity_not_in_cited_nodes"] == 1
+    assert o["narrative"]["relation_not_in_graph"] == 1
 
 
 def test_entities_and_citation_checks():
@@ -98,7 +104,8 @@ def test_entities_and_citation_checks():
     assert validate_narrative(s, {"tool_call:t3"}, facts)["kept"] == 1
     r = validate_narrative("It contacted evil.example.com [tool_call:t3]. Nothing else.", {"tool_call:t3"}, facts)
     assert r["kept"] == 0 and r["unsupported_by_reason"] == {"bad_or_missing_citation": 1,
-                                                             "entity_not_in_cited_nodes": 1}
+                                                             "entity_not_in_cited_nodes": 1,
+                                                             "relation_not_in_graph": 0}
 
 
 def test_local_llm_falls_back_when_the_server_rejects_json_schema():
@@ -155,6 +162,7 @@ def test_summary_lines_show_the_narrative_only_when_there_is_one():
     assert not any("narrative" in l for l in summary_lines({"overall": base, "skipped": []}))
     base["narrative"] = {"runs": 2, "sentences": 10, "dropped": 1, "unsupported_before": 0.1,
                          "unsupported_after": 0.0, "entity_not_in_cited_nodes": 1, "bad_or_missing_citation": 0,
+                         "relation_not_in_graph": 0,
                          "classified_calls": 2, "classification_accuracy": 1.0, "unsupported_ids": 0}
     lines = summary_lines({"overall": base, "skipped": []})
     assert any(l.startswith("narrative unsupported claims       0.1 before validation, 0.0 after") for l in lines)

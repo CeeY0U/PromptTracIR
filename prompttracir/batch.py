@@ -150,6 +150,8 @@ def _narrative(results: list[dict]) -> dict:
             "unsupported_after": 0.0 if sent else None,
             "entity_not_in_cited_nodes": sum((x.get("by_reason") or {}).get("entity_not_in_cited_nodes", 0) for x in n),
             "bad_or_missing_citation": sum((x.get("by_reason") or {}).get("bad_or_missing_citation", 0) for x in n),
+            "relation_not_in_graph": sum((x.get("by_reason") or {}).get("relation_not_in_graph", 0) for x in n),
+            "validation": sorted({x["validation"] for x in n if x.get("validation")}),
             "classified_calls": cls,
             "classification_accuracy": round(sum(x["classified_correct"] for x in n) / cls, 3) if cls else None,
             "unsupported_ids": sum(x["unsupported_ids"] for x in n),
@@ -329,8 +331,9 @@ def summary_lines(report: dict) -> list[str]:
         lines += [
             f"narrative unsupported claims       {nv['unsupported_before']} before validation, "
             f"{nv['unsupported_after']} after   ({nv['sentences']} sentences in {nv['runs']} summaries, target <= 0.05 / 0)",
-            f"  dropped: entity not in cited nodes {nv['entity_not_in_cited_nodes']}, "
-            f"bad or missing citation {nv['bad_or_missing_citation']}",
+            f"  dropped: entity not in cited nodes {nv['entity_not_in_cited_nodes']}, relation not in graph "
+            f"{nv.get('relation_not_in_graph', 0)}, bad or missing citation {nv['bad_or_missing_citation']}"
+            + (f"   (checks: {', '.join(nv['validation'])})" if nv.get("validation") else ""),
             f"local-model call verdicts          {nv['classification_accuracy']}   ({nv['classified_calls']} deviating calls, "
             f"{nv['unsupported_ids']} unknown IDs cited)",
         ]
