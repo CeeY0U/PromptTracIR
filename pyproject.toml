@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompttracir"
-version = "0.6.0"
+version = "0.7.0"
 description = "Incident reconstruction and attribution for prompt-injection attacks on AI agents"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,7 +18,8 @@ dependencies = [
 
 [project.optional-dependencies]
 evtx = ["python-evtx>=0.7"]
-dev = ["pytest>=8"]
+stix = ["stix2-validator>=3"]
+dev = ["pytest>=8", "stix2-validator>=3"]
 
 [project.scripts]
 ptir = "prompttracir.cli:main"
@@ -27,4 +28,4 @@ ptir = "prompttracir.cli:main"
 include = ["prompttracir*"]
 
 [tool.setuptools.package-data]
-prompttracir = ["web/*"]
+prompttracir = ["web/*", "web/vendor/*"]

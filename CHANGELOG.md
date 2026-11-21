@@ -2,6 +2,60 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.7.0] - 2026-11-21
+
+Roadmap v0.7 (analyst interface and export), and a relationship check for local-model summaries
+from the v0.6 narrative measurement.
+
+### Added
+- Analyst views (`prompttracir/views.py`, `web/index.html`): an attack flow (user request, entry
+  point with the injected text, each tool call with its processes, effects, evidence states and
+  findings, the first deviation outlined), a timeline filtered by source, text and attack-chain
+  membership with each row marked by evidence state, and an evidence tab with the preserved
+  files, custody log and a hash check. The sidebar shows the validated summary and the sentences
+  validation dropped, with the reason.
+- Raw-record viewer (`/api/raw/{event_id}`): reads the record from the preserved copy by its
+  locator: JSON lines, CSV rows with their header (EZ Tools), Zeek TSV rows by `#fields`, EVTX
+  records by RecordID, Volatility rows and file-inventory entries.
+- `ptir export-stix CASE [--out F] [--tag T] [--validate]` and `/api/export/stix`
+  (`prompttracir/stix.py`): a STIX 2.1 bundle with processes, files, connections, domains and
+  URLs, observed data per finding and for the chain, ATLAS (AML.T0051.001, AML.T0053, AML.T0086)
+  and ATT&CK (T1700, T1105, T1053.005, T1547.001, T1565.001) attack patterns with sightings,
+  notes, an incident and a report. Evidence states, ProcessGuids, attribution and record IDs
+  travel in a property extension (`docs/STIX_EXTENSION.md`). IDs are deterministic. All 35 lab
+  cases pass `stix2-validator` 3.3 (warnings only); new extra `stix`.
+- `Dockerfile`, `docker-compose.yml`, `.dockerignore`: the UI and CLI (`ui`) and the pinned
+  llama.cpp server (`model`, profile `llm`, 16k context). Ports bind to 127.0.0.1.
+- Relationship check for summaries (`llm.relation_problems`): a cited effect must be reachable from
+  a cited tool call or process along effect edges; an action verb (wrote, sent, ran, read,
+  fetched, connected) needs a matching edge from the cited call or its processes, or a tool of
+  that kind; a claim about the injection must cite the entry-point fragment or its source; a
+  claim about the deviation must cite the first deviating call. Dropped sentences are counted as
+  `relation_not_in_graph` in `llm.json` and `eval-batch`.
+- `ptir explain --revalidate`: re-checks stored summaries without the model (the old summary is
+  kept as `summary_before_revalidation`, and a custody entry is logged). The 13 v0.6 summaries
+  re-checked: 16 of 75 sentences unsupported before validation (0.213), 0 after.
+- `ptir explain --timeout S` (default 1800); one failed run no longer stops the rest.
+
+### Changed
+- Summary prompt v0.7.0: the model also gets the analysis (entry points, first deviation) and
+  rules for the injection's origin, the deviation and what each call did.
+- Cytoscape 3.35.0 is vendored (`web/vendor/`, MIT), so the UI works without internet.
+- `/api/timeline` returns `{rows, matched, shown, sources}` and takes `source`, `q`, `chain` and
+  `limit`.
+- Decision: the UI stays a single page instead of a React port (ROADMAP section 6).
+- Docs: ROADMAP (v0.6 measurement and caveat, v0.7 status, 33 scored runs, impact 0.333),
+  DATASET_PROGRESS (jt-i1, jt-i2), README (views, export, Docker, validation).
+
+### Fixed
+- An in-process effect goes to the tool call whose trace claims it when it lands up to 0.25 s
+  outside that call's window (jt-i1: `notes.md` was credited to the curl upload).
+- `python -m prompttracir.cli explain` failed with NameError in v0.6.0 (the `__main__` guard ran
+  before the command was defined).
+- A case made on Windows (evidence paths stored with backslashes) now opens on Linux, e.g. in the
+  Docker image: evidence paths are resolved with either separator and new cases store `/`.
+- Tests: 171 -> 187.
+
 ## [0.6.0] - 2026-11-21
 
 Roadmap v0.6 (local model analysis), the fixes from the 17 v0.5 lab runs (two labs), and the

@@ -13,17 +13,18 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.6.0 (21 Nov 2026). The pipeline runs on real lab evidence (Windows 11 24H2 VM,
-> Nov 2026). v0.4 added the attribution engine, v0.5 causal reconstruction (localizer plug-ins
-> with sentence-level spans, a transcript cross-check against Sysmon, 4688 and memory, chain
-> metrics). v0.6 makes the local-model layer checkable: schema-constrained replies, summaries
-> whose named files, programs and hosts must appear in the cited evidence, a pinned model, and
-> `ptir explain`. It also carries the fixes from the v0.5 lab runs, among them Claude Code's Bash
-> wrapper on Windows. On the 31 lab runs: localization F1 1.0, chain edge F1 1.0, link precision
-> 1.0, attribution macro-F1 0.988, two of two tampered traces detected, no finding on any of the
-> 21 runs without an attack. Submission deadline: 29 Nov 2026, 23:59. See
+> Status: v0.7.0 (21 Nov 2026). The pipeline runs on real lab evidence (Windows 11 24H2 VM,
+> Nov 2026). v0.4 added the attribution engine, v0.5 causal reconstruction, v0.6 a checkable
+> local-model layer (schema-constrained replies, entity-checked summaries, a pinned model,
+> `ptir explain`). v0.7 adds the analyst views (attack flow, timeline, evidence, raw records),
+> a STIX 2.1 export tagged with MITRE ATLAS and ATT&CK, Docker Compose, and a relationship check
+> that drops summary sentences whose claims do not match the graph. On the 33 lab runs (v0.6.0):
+> localization F1 1.0, chain edge F1 1.0, link precision 1.0, attribution macro-F1 0.99, two of
+> two tampered traces detected, no finding on any of the 21 runs without an attack. Local-model
+> summaries: 1 of 75 sentences unsupported with the v0.6 checks, 16 of 75 once wrong relations
+> count (v0.7 check), 0 after validation. Submission deadline: 29 Nov 2026, 23:59. See
 > [ROADMAP.md](ROADMAP.md), [docs/TESTING.md](docs/TESTING.md), dataset progress in
-> [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) (30 of 30 slots) and
+> [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) (30 of 30 slots, 33 scored runs) and
 > [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -33,11 +34,25 @@ contradicted, unknown) and links back to the exact raw record it came from.
 ```bash
 git clone <repo> && cd prompttracir
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -e ".[evtx,dev]"
+pip install -e ".[evtx,stix,dev]"
 pytest -q                                               # no model or VM needed
 ```
 
 Python 3.10+. The analyst machine can be Linux, macOS or Windows; only the lab VM has to be Windows.
+
+### Docker (v0.7)
+
+```bash
+CASE=./cases/demo docker compose up --build ui           # UI on http://127.0.0.1:8000
+CASE=./cases/demo docker compose run --rm ui ptir export-stix /case --validate
+# pinned local model (configs/local-model.json); put the GGUF in ./models as model.gguf
+docker compose --profile llm up -d model
+CASE=./cases/demo docker compose run --rm ui ptir explain /case --llm-url http://model:8080
+```
+
+The case folder is mounted read-write at `/case` (verifying hashes adds custody entries). Ports
+bind to 127.0.0.1 only: the UI has no login. `MODELS`, `MODEL_FILE`, `LLM_THREADS`, `PTIR_PORT`
+and `LLM_PORT` override the defaults in `docker-compose.yml`.
 
 ## Quick start (synthetic sample)
 
@@ -54,6 +69,7 @@ ptir ingest  cases/demo
 ptir analyze cases/demo
 ptir eval    cases/demo $S/ground_truth.json
 ptir serve   cases/demo                                  # http://127.0.0.1:8000
+ptir export-stix cases/demo --validate                   # cases/demo/output/stix_bundle.json
 ```
 
 The sample is one indirect-injection run: a web page tells the agent to upload
@@ -74,10 +90,12 @@ agent, git attributed to the human, exfiltration to `collect.attacker-lab.test` 
 | `ptir analyze CASE [options]` | Correlate, attribute, build the graph, run rules, traceback, impact. |
 | `ptir config` | Print the attribution settings (weights, thresholds, time windows) as JSON. |
 | `ptir verify CASE` | Re-hash every preserved file. |
-| `ptir serve CASE` | Analyst UI: attack-flow graph, findings, impact, timeline, raw records. |
+| `ptir serve CASE [--host H] [--port P]` | Analyst UI (below). |
+| `ptir export-stix CASE [--out F] [--validate]` | (v0.7) STIX 2.1 bundle of the analysis, tagged with MITRE ATLAS / ATT&CK techniques; `--validate` runs the OASIS validator (`pip install -e ".[stix]"`). Extension properties: [docs/STIX_EXTENSION.md](docs/STIX_EXTENSION.md). |
 | `ptir eval CASE GROUND_TRUTH` | Score the case against harness ground truth. |
 | `ptir eval-batch ROOT [options]` | Score every analysed run under `ROOT` and write `results.json` and `per_run.csv`. `--families` / `--exclude-families` pick a split; `--without KIND`, `--config F` or `--tag T` re-analyse every run into `output/<tag>/` first (ablations, tuning); `--localizer heuristic-v01` scores the frozen v0.1 cue-only baseline. |
-| `ptir explain CASE_OR_ROOT --llm-url URL` | (v0.6) Run only the local-model layer on analysed case(s): a verdict per deviating tool call and a grounded summary, into `llm.json`. `--families` picks the training split; `eval-batch` then reports unsupported claims before and after validation. |
+| `ptir explain CASE_OR_ROOT --llm-url URL` | (v0.6) Run only the local-model layer on analysed case(s): a verdict per deviating tool call and a grounded summary, into `llm.json`. `--families` picks the training split; `eval-batch` then reports unsupported claims before and after validation. `--timeout S` per model request (default 1800). |
+| `ptir explain CASE_OR_ROOT --revalidate` | (v0.7) Re-check the stored summaries with the current validation (IDs, entities and relations) without calling the model; the previous summary is kept in `llm.json` as `summary_before_revalidation`. |
 | `ptir llm-pin` | Print the pinned local model, quantisation, server command and sampling (`configs/local-model.json`). |
 
 `analyze` options:
@@ -139,7 +157,8 @@ attribution (v0.4) and reconstruction (v0.5) use them as independent signals.
 | `traceback.json` | What the localizer (segment, replay, group search) tested and found, with spans |
 | `crosscheck.json` | Transcript cross-check: each tool call's command against Sysmon / 4688 and memory, and shells the runtime started that the trace does not mention (v0.5) |
 | `graph_reduced.json` | The attack chain plus one hop around it, for large cases (v0.5) |
-| `llm.json` | LLM classifications, validated summary, unsupported-claim rate by reason, and the model pin, served model and prompt version (v0.6) |
+| `llm.json` | LLM classifications, validated summary, unsupported-claim rate by reason (`relation_not_in_graph` since v0.7), and the model pin, served model and prompt version (v0.6) |
+| `stix_bundle.json` | STIX 2.1 bundle from `ptir export-stix` (v0.7) |
 
 ---
 
@@ -165,7 +184,8 @@ evidence files ──► case (hash, read-only copy, custody log)
                 (INFERRED)        (validated)
                      │
                      ▼
-               api.py + web/index.html (Cytoscape attack-flow view)
+               api.py + web/index.html (attack flow, graphs, timeline, evidence)
+               stix.py (STIX 2.1 export, ATLAS / ATT&CK tags)
 ```
 
 Design rules worth keeping:
@@ -206,6 +226,32 @@ When Sysmon is missing, Security 4688 builds the process tree. For traces withou
 match the session's tool calls.
 
 ---
+
+### Analyst UI (`ptir serve`)
+
+One page (`prompttracir/web/index.html`, Cytoscape vendored under `web/vendor/`, so it works
+offline). The sidebar shows the entry point, impact, findings and the validated local-model
+summary with the sentences validation dropped and why. Tabs:
+
+| Tab | Shows |
+|---|---|
+| Attack flow | User request, then the entry point with the injected text, then each tool call with the processes it ran, its effects (each with its evidence state) and findings; the first deviation is outlined |
+| Chain graph / Full graph | The provenance graph; edges coloured by evidence state (corroborated, observed, inferred dashed, contradicted), processes outlined by attribution |
+| Timeline | Every canonical event; filter by source, text, or attack-chain membership; rows marked with the evidence state of the edges they support |
+| Evidence | Preserved files with SHA-256, the custody log, and a "Verify hashes" button |
+
+Clicking a step, node, edge, finding or timeline row lists its supporting records; clicking a
+record opens the raw record read from the preserved copy (JSON line, CSV row with its header,
+Zeek row, EVTX record, Volatility row). "Export STIX" downloads the bundle.
+
+### Local-model validation (v0.6, v0.7)
+
+A summary sentence is kept only if (1) every ID it cites exists, (2) every file, program, domain
+or address it names appears in the cited nodes, and (3) since v0.7, its claims match the graph:
+a sentence about the injection's origin must cite the entry-point fragment or its source, a
+"first deviation" claim must cite the first deviating call, an effect it cites must be reachable
+from the tool call or process it cites, and its verb must be something that actor can do (a
+`read_file` call does not upload; a process cannot "create" a file it has no edge to).
 
 ## Lab setup (Windows 11 VM)
 
@@ -263,14 +309,15 @@ Mapped to the proposal so the team can split it up:
 | Provenance graph, backward/forward traversal | done | |
 | Scope rules, first deviation, exfil impact | done | |
 | Leave-one-out replay traceback | done | the real model followed the injection in 2 of 2 runs at temperature 0.7; replay fidelity is recorded per call (`baseline_survival`) |
-| Local LLM classification + validated summary | done (v0.6) | schema-constrained, entity-checked, pinned model; the unsupported-claim rate on the lab runs still has to be measured on the VM (`ptir explain`) |
-| Analyst UI | done (single page + Cytoscape) | proposal said React; either port or note the change |
+| Local LLM classification + validated summary | done (v0.6), relation check (v0.7) | schema-constrained, entity- and relation-checked, pinned model; measured on the VM with the v0.6 prompt (ROADMAP v0.6 status); the v0.7 prompt still has to be measured |
+| Analyst UI | done (v0.7) | single page + Cytoscape: attack flow, graphs, timeline, evidence, raw records; decided to keep it instead of React (ROADMAP section 6) |
+| Docker Compose | done (v0.7) | `ui` and the pinned llama.cpp server (`--profile llm`); not yet run on a lab machine |
 | MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3), checked on real output (v0.3.1) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; `$MFT`/`$J` only with KAPE |
 | Zeek DNS / HTTP, Security 4663 file reads | done (v0.3) | 4663 needs `tools/audit-canary.ps1` on the VM |
 | Volatility 3 cross-check of the transcript | done (v0.5) | `crosscheck.py` compares the trace with Sysmon / 4688 and memory; processes from a finished run are usually gone from memory, so Sysmon carries most checks |
 | AgentDFIR / OpenTelemetry trace adapters | done (v0.2) | Claude Code transcripts have no PIDs; signature check left to `agentdfir verify` |
 | PromptLocate / TracLLM / AttnTrace modules | done (v0.5) except AttnTrace | segment (PromptLocate-style) and group search (TracLLM-style) localizers; AttnTrace needs attention weights an OpenAI-compatible server does not return |
-| STIX 2.1 export with ATLAS tags | **todo** | |
+| STIX 2.1 export with ATLAS tags | done (v0.7) | `ptir export-stix`; all 35 lab cases pass the OASIS validator |
 | Multi-run evaluation | done (v0.2) | `ptir eval-batch` |
 | Ablations | done (v0.4) | `ptir analyze --without KIND`, `ptir eval-batch --without KIND` |
 | Baselines | **todo** | v0.8 |
@@ -279,13 +326,14 @@ Mapped to the proposal so the team can split it up:
 
 ```
 prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, crosscheck, shellwrap, llm,
-                pipeline, runs (add-run), adfir (import), batch (eval-batch), config, api, cli, web/
+                pipeline, runs (add-run), adfir (import), batch (eval-batch), config, views, stix, api, cli, web/
 harness/        agent.py (traced lab agent), scripted_model.py, scenario.py, exfil_sink.py, label_run.py,
                 tamper_trace.py (edited-transcript test copies), scenarios/
 tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, audit-canary.ps1,
                 sysmon-lab.xml
 configs/        attribution-defaults.json, local-model.json (pinned model and server), tuning procedure
-docs/           TESTING.md (automated tests, lab runs, acceptance checks), DATASET_PROGRESS.md
+docs/           TESTING.md (automated tests, lab runs, acceptance checks), DATASET_PROGRESS.md, STIX_EXTENSION.md
+Dockerfile, docker-compose.yml   UI / CLI image and the pinned local model server (v0.7)
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests
 ```

@@ -1,11 +1,18 @@
-"""FastAPI backend for the analyst UI (`ptir serve CASE`)."""
+"""FastAPI backend for the analyst UI (`ptir serve CASE`).
+
+v0.7: attack flow, filtered timeline with evidence states, evidence and custody, raw records,
+STIX 2.1 export. The page loads Cytoscape from /static (vendored), so it works offline in the lab.
+"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 
+from . import views
 from .case import Case
 
 WEB = Path(__file__).parent / "web"
@@ -13,6 +20,7 @@ WEB = Path(__file__).parent / "web"
 
 def create_app(case: Case) -> FastAPI:
     app = FastAPI(title="PromptTracIR")
+    app.mount("/static", StaticFiles(directory=WEB / "vendor"), name="static")
 
     @app.get("/")
     def index():
@@ -40,8 +48,16 @@ def create_app(case: Case) -> FastAPI:
                      "edges": [e for e in g["edges"] if e["src"] in keep and e["dst"] in keep]}
         return g
 
-    for name in ("findings", "impact", "attribution", "chain", "traceback", "llm", "tool_links"):
+    for name in ("findings", "impact", "attribution", "chain", "traceback", "tool_links", "crosscheck"):
         app.add_api_route(f"/api/{name}", (lambda n=name: out(f"{n}.json")), methods=["GET"])
+
+    @app.get("/api/llm")
+    def llm():
+        return case.read_output("llm.json") or {}
+
+    @app.get("/api/flow")
+    def flow():
+        return views.attack_flow(case)
 
     @app.get("/api/events/{event_id:path}")
     def event(event_id: str):
@@ -54,12 +70,35 @@ def create_app(case: Case) -> FastAPI:
         e["raw"]["original_path"] = info.get("original_path")
         return e
 
+    @app.get("/api/raw/{event_id:path}")
+    def raw(event_id: str):
+        try:
+            return views.raw_record(case, event_id)
+        except KeyError:
+            raise HTTPException(404, "no such event")
+
     @app.get("/api/timeline")
-    def timeline(limit: int = 2000):
-        return [{"event_id": e.event_id, "ts": e.timestamp.isoformat(), "source": e.source.value,
-                 "action": e.action.value, "pid": e.pid, "image": e.image,
-                 "detail": (e.command_line or e.object or e.attrs.get("text", "")[:160] or e.attrs.get("tool")
-                            or e.image)}   # Prefetch, Amcache, SRUM, UserAssist, pslist only name a program
-                for e in case.load_events()[:limit]]
+    def timeline(source: str | None = None, q: str | None = None, chain: bool = False, limit: int = 2000):
+        return views.timeline(case, source=source, q=q, chain_only=chain, limit=min(limit, 20000))
+
+    @app.get("/api/evidence")
+    def evidence():
+        return views.evidence(case)
+
+    @app.post("/api/verify")
+    def verify():
+        res = case.verify_evidence()
+        return {"ok": all(res.values()), "results": res}
+
+    @app.get("/api/export/stix")
+    def export_stix():
+        from .stix import export_case
+        try:
+            bundle = export_case(case)
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+        name = f"{case.meta.get('name', 'case')}-stix.json"
+        return Response(json.dumps(bundle, indent=2), media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     return app

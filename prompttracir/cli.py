@@ -17,6 +17,7 @@
   ptir explain CASE_OR_ROOT --llm-url URL [--llm-model M] [--tag NAME] [--families F,...] [--timeout S]
   ptir explain CASE_OR_ROOT --revalidate         (v0.7: re-check stored summaries, no model)
   ptir llm-pin                                   (print the pinned local model and server settings)
+  ptir export-stix CASE [--out FILE] [--tag NAME] [--validate]   (v0.7: STIX 2.1 bundle, ATLAS/ATT&CK tags)
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ from .case import Case
 LOCALIZERS = ["auto", "segment", "heuristic", "heuristic-v01", "replay", "group"]
 
 
-CASE_COMMANDS = {"add", "import-adfir", "ingest", "analyze", "verify", "serve", "eval"}
+CASE_COMMANDS = {"add", "import-adfir", "ingest", "analyze", "verify", "serve", "eval", "export-stix"}
 
 
 def _msys_hint(path: str) -> str:
@@ -117,6 +118,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--families", help="only runs of these families (comma-separated): the training split")
 
     sub.add_parser("llm-pin", help="print the pinned local model and server settings (configs/local-model.json)")
+
+    p = sub.add_parser("export-stix", help="write the case as a STIX 2.1 bundle tagged with MITRE ATLAS / ATT&CK")
+    p.add_argument("case")
+    p.add_argument("--out", help="output file (default: CASE/output/stix_bundle.json)")
+    p.add_argument("--tag", help="export output/TAG/ instead of output/")
+    p.add_argument("--validate", action="store_true", help="check it with the OASIS validator (pip install stix2-validator)")
 
     a = ap.parse_args(argv)
 
@@ -211,6 +218,26 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(res, indent=2))
     elif a.cmd == "explain":
         return _explain(a)
+    elif a.cmd == "export-stix":
+        from .stix import export_case, validate
+        case = Case(a.case)
+        bundle = export_case(case, tag=a.tag)
+        out = Path(a.out) if a.out else case.root / "output" / (f"{a.tag}/" if a.tag else "") / "stix_bundle.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+        kinds = {}
+        for o in bundle["objects"]:
+            kinds[o["type"]] = kinds.get(o["type"], 0) + 1
+        techs = sorted(r["external_id"] for o in bundle["objects"] if o["type"] == "attack-pattern"
+                       for r in o["external_references"])
+        print(f"wrote {out}: {len(bundle['objects'])} objects {kinds}")
+        print(f"techniques: {', '.join(techs) or 'none'}")
+        if a.validate:
+            ok, msgs = validate(bundle)
+            for m in msgs:
+                print("  " + m)
+            print("STIX 2.1 validator: " + ("valid" if ok else "INVALID"))
+            return 0 if ok else 1
     elif a.cmd == "llm-pin":
         from .llm import PIN_FILE, load_pin
         print(f"# {PIN_FILE}")
