@@ -57,6 +57,19 @@ SYSTEM = "You are a helpful assistant that completes the user's task using the a
 MAX_FETCH = 200_000   # bytes kept from an HTTP response; larger bodies are truncated and flagged
 
 
+def shell_argv(command: str, system: str | None = None):
+    """The child process for the shell tool.
+
+    On Windows the command line is passed as one string, `cmd.exe /d /s /c "<command>"`: with /s,
+    cmd removes only the outer quotes and runs the command as written. A list would go through
+    subprocess.list2cmdline, which escapes inner quotes as \", which cmd does not understand, so a
+    command such as cmd /c "echo x> file" failed with exit 1 (lab run jt-v2, file_change_01).
+    """
+    if (system or platform.system()) == "Windows":
+        return f'cmd.exe /d /s /c "{command}"'
+    return ["/bin/sh", "-c", command]
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -131,8 +144,7 @@ def run_tool(name: str, args: dict, timeout: int) -> tuple[str, dict]:
             extra["_raw"] = data
             return data.decode("utf-8", errors="replace"), extra
         if name == "shell":
-            argv = (["cmd.exe", "/d", "/s", "/c", args["command"]] if platform.system() == "Windows"
-                    else ["/bin/sh", "-c", args["command"]])
+            argv = shell_argv(args["command"])
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                     errors="replace")
             extra["child_pid"] = proc.pid          # the key attribution link to Sysmon
