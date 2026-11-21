@@ -35,3 +35,12 @@ attribution engine uses, at its built-in default. A test fails if it drifts from
 
    Report those numbers with the file's fingerprint (`config.json` in each output folder, and
    `condition.config_fingerprints` in `results.json`). Do not tune again after looking at them.
+
+# Local model (v0.6)
+
+`local-model.json` pins the model the lab agent's real runs and PromptTracIR's local-model
+analysis use: Qwen2.5-7B-Instruct, Q4_K_M, served by llama.cpp's `llama-server`, and the sampling
+settings for analysis (temperature 0, seed 1234, at most 1024 tokens per reply). `ptir llm-pin`
+prints it; `ptir analyze --llm-url` and `ptir explain` read it, and every `llm.json` records it
+next to the model id the server reported, so a result can be traced to the model that produced
+it. Fill in `model.sha256` once from the lab VM (`Get-FileHash C:\tools\llama\model.gguf`).

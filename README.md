@@ -13,15 +13,17 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.5.0 (17 Nov 2026). The pipeline runs on real lab evidence (Windows 11 24H2 VM,
-> Nov 2026). v0.4 added the attribution engine; v0.5 adds causal reconstruction: localizer
-> plug-ins with sentence-level spans (segment, replay, TracLLM-style group search, surrogate
-> replay for Claude Code), a transcript cross-check against Sysmon, 4688 and memory that flags
-> edited traces, chain metrics, a collection-time file inventory for impact, and the fixes from
-> the v0.4 lab runs. On 8 re-analysed lab runs: localization F1 1.0, chain edge F1 1.0, three of
-> three tampered traces detected. Submission deadline: 29 Nov 2026, 23:59. See
+> Status: v0.6.0 (21 Nov 2026). The pipeline runs on real lab evidence (Windows 11 24H2 VM,
+> Nov 2026). v0.4 added the attribution engine, v0.5 causal reconstruction (localizer plug-ins
+> with sentence-level spans, a transcript cross-check against Sysmon, 4688 and memory, chain
+> metrics). v0.6 makes the local-model layer checkable: schema-constrained replies, summaries
+> whose named files, programs and hosts must appear in the cited evidence, a pinned model, and
+> `ptir explain`. It also carries the fixes from the v0.5 lab runs, among them Claude Code's Bash
+> wrapper on Windows. On the 31 lab runs: localization F1 1.0, chain edge F1 1.0, link precision
+> 1.0, attribution macro-F1 0.988, two of two tampered traces detected, no finding on any of the
+> 21 runs without an attack. Submission deadline: 29 Nov 2026, 23:59. See
 > [ROADMAP.md](ROADMAP.md), [docs/TESTING.md](docs/TESTING.md), dataset progress in
-> [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) (14 of 30 runs) and
+> [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) (30 of 30 slots) and
 > [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -74,13 +76,15 @@ agent, git attributed to the human, exfiltration to `collect.attacker-lab.test` 
 | `ptir verify CASE` | Re-hash every preserved file. |
 | `ptir serve CASE` | Analyst UI: attack-flow graph, findings, impact, timeline, raw records. |
 | `ptir eval CASE GROUND_TRUTH` | Score the case against harness ground truth. |
-| `ptir eval-batch ROOT [options]` | Score every analysed run under `ROOT` and write `results.json` and `per_run.csv`. `--families` / `--exclude-families` pick a split; `--without KIND`, `--config F` or `--tag T` re-analyse every run into `output/<tag>/` first (ablations, tuning). |
+| `ptir eval-batch ROOT [options]` | Score every analysed run under `ROOT` and write `results.json` and `per_run.csv`. `--families` / `--exclude-families` pick a split; `--without KIND`, `--config F` or `--tag T` re-analyse every run into `output/<tag>/` first (ablations, tuning); `--localizer heuristic-v01` scores the frozen v0.1 cue-only baseline. |
+| `ptir explain CASE_OR_ROOT --llm-url URL` | (v0.6) Run only the local-model layer on analysed case(s): a verdict per deviating tool call and a grounded summary, into `llm.json`. `--families` picks the training split; `eval-batch` then reports unsupported claims before and after validation. |
+| `ptir llm-pin` | Print the pinned local model, quantisation, server command and sampling (`configs/local-model.json`). |
 
 `analyze` options:
 
 * `--replay-url URL --replay-model M [--samples N]` counterfactual replay against the same local model the agent used (leave-one-out, or group search for long contexts). Without a recorded request (Claude Code) the request is rebuilt from the trace and the results count half. Without `--replay-url`, the model-free segment localizer is used and its edges are marked as weaker.
-* `--localizer auto|segment|heuristic|replay|group` pick the traceback method (`heuristic` scores whole fragments by instruction cues only: the baseline).
-* `--llm-url URL --llm-model M` local-LLM intent classification and an evidence-cited summary.
+* `--localizer auto|segment|heuristic|heuristic-v01|replay|group` pick the traceback method (`heuristic` scores whole fragments by instruction cues only; `heuristic-v01` does so with the v0.1 cue list, frozen, as the report's baseline).
+* `--llm-url URL --llm-model M` local-LLM intent classification and an evidence-cited summary (v0.6: schema-constrained, with entity-level validation; settings from `configs/local-model.json`).
 * `--config FILE` attribution settings; only the keys you change (see `configs/README.md`).
 * `--without KIND` (repeatable) ignore that evidence kind, for ablations. Outputs go to
   `output/without-<kinds>/` (or `--tag NAME`), so the full analysis in `output/` is kept.
@@ -135,7 +139,7 @@ attribution (v0.4) and reconstruction (v0.5) use them as independent signals.
 | `traceback.json` | What the localizer (segment, replay, group search) tested and found, with spans |
 | `crosscheck.json` | Transcript cross-check: each tool call's command against Sysmon / 4688 and memory, and shells the runtime started that the trace does not mention (v0.5) |
 | `graph_reduced.json` | The attack chain plus one hop around it, for large cases (v0.5) |
-| `llm.json` | LLM classifications, validated summary, unsupported-claim rate |
+| `llm.json` | LLM classifications, validated summary, unsupported-claim rate by reason, and the model pin, served model and prompt version (v0.6) |
 
 ---
 
@@ -252,14 +256,14 @@ Mapped to the proposal so the team can split it up:
 |---|---|---|
 | Case format, hashing, custody, canonical schema | done | |
 | Agent trace + harness with child-PID capture and request logging | done | plain loop; LangGraph optional; raw source bytes kept (v0.2) |
-| Scenario schema, setup, labelling with ProcessGuid and sink window | done (v0.2) | 5 scenarios (v0.5 adds file change and download); dataset 14 of 30 runs (`docs/DATASET_PROGRESS.md`) |
+| Scenario schema, setup, labelling with ProcessGuid and sink window | done (v0.2) | 5 scenarios (v0.5 adds file change and download); dataset 30 of 30 slots, counted by outcome (`docs/DATASET_PROGRESS.md`) |
 | Lab collection script (logs, pcap, SRUM, Prefetch, Amcache, hives, LNK, memory, KAPE) | done (v0.2), run on the lab VM (v0.3.1) | exports logs from boot; copies hive transaction logs |
 | Sysmon / Security / PowerShell / PSReadLine / Zeek parsers | done | |
 | Tool-to-process correlation, human/agent attribution | done (v0.4) | settings file, clock offset, 4688/4104 coverage, UserAssist / LNK / ShellBags / logon signals, Claude Code runtime inference, calibrated P(agent); weights not yet tuned on real runs |
 | Provenance graph, backward/forward traversal | done | |
 | Scope rules, first deviation, exfil impact | done | |
 | Leave-one-out replay traceback | done | the real model followed the injection in 2 of 2 runs at temperature 0.7; replay fidelity is recorded per call (`baseline_survival`) |
-| Local LLM classification + validated summary | done | needs prompt tuning on real runs |
+| Local LLM classification + validated summary | done (v0.6) | schema-constrained, entity-checked, pinned model; the unsupported-claim rate on the lab runs still has to be measured on the VM (`ptir explain`) |
 | Analyst UI | done (single page + Cytoscape) | proposal said React; either port or note the change |
 | MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3), checked on real output (v0.3.1) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; `$MFT`/`$J` only with KAPE |
 | Zeek DNS / HTTP, Security 4663 file reads | done (v0.3) | 4663 needs `tools/audit-canary.ps1` on the VM |
@@ -274,13 +278,13 @@ Mapped to the proposal so the team can split it up:
 ## Repository layout
 
 ```
-prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, crosscheck, llm,
+prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, crosscheck, shellwrap, llm,
                 pipeline, runs (add-run), adfir (import), batch (eval-batch), config, api, cli, web/
 harness/        agent.py (traced lab agent), scripted_model.py, scenario.py, exfil_sink.py, label_run.py,
                 tamper_trace.py (edited-transcript test copies), scenarios/
 tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, audit-canary.ps1,
                 sysmon-lab.xml
-configs/        attribution-defaults.json, tuned settings files, tuning procedure
+configs/        attribution-defaults.json, local-model.json (pinned model and server), tuning procedure
 docs/           TESTING.md (automated tests, lab runs, acceptance checks), DATASET_PROGRESS.md
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests
