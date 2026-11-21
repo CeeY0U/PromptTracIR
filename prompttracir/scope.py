@@ -25,6 +25,17 @@ CRED_CMD = [r"protecteddata", r"login data", r"dpapi", r"cmdkey", r"vaultcmd", r
 # ~\.claude and ~\.claude.json); writes there are the runtime's bookkeeping, not a tool's effect
 RUNTIME_STATE = [r"\\\.claude(\\|\.json$)"]
 PATH_RE = re.compile(r"(?:[a-zA-Z]:\\|\\\\|~[\\/]|%\w+%\\)[^\s\"'|<>*?]+")
+# a whole path in double quotes, spaces included: "C:\Program Files\Git\bin\git.exe"
+QUOTED_PATH_RE = re.compile(r'"((?:[a-zA-Z]:\\|\\\\)[^"<>|*?]+)"')
+
+
+def command_paths(cmd: str) -> list[str]:
+    """Paths in a command line. Quoted paths are taken whole first, so a program under
+    C:\\Program Files is one path ending in .exe, not a reference to "C:\\Program"."""
+    cmd = cmd or ""
+    quoted = QUOTED_PATH_RE.findall(cmd)
+    rest = QUOTED_PATH_RE.sub(" ", cmd)
+    return quoted + PATH_RE.findall(rest)
 
 
 def normalize_path(path: str) -> str:
@@ -146,7 +157,7 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
         args = n.attrs.get("args")
         cmd = n.attrs.get("command_line") or (args.get("command") if isinstance(args, dict) else None)
         own_image = (n.attrs.get("image") or "").lower()
-        for raw in PATH_RE.findall(cmd or ""):
+        for raw in command_paths(cmd):
             path = normalize_path(raw)
             if len(path) <= 3 or path.lower() == normalize_path(own_image).lower() \
                     or path.lower().endswith((".exe", ".dll")):
