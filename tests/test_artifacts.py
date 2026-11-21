@@ -204,8 +204,8 @@ def test_timeline_api_shows_new_events(tmp_path):
     c.add_evidence(FX / "20261029070100_PECmd_Output.csv", "ez_prefetch")
     c.add_evidence(FX / "vol" / "vol_netscan.json", "vol_netscan")
     ingest(c)
-    rows = TestClient(create_app(c)).get("/api/timeline").json()
-    pf = [r for r in rows if r["source"] == "prefetch"]
+    rows = TestClient(create_app(c)).get("/api/timeline").json()["rows"]     # v0.7: rows plus counts
+    pf =[r for r in rows if r["source"] == "prefetch"]
     assert pf and all(r["detail"] for r in pf)                               # program path, not blank
     assert any(r["detail"] == "203.0.113.50:443" for r in rows if r["action"] == "mem_conn")
 

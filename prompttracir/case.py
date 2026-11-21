@@ -14,6 +14,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 from datetime import datetime, timezone
@@ -110,7 +111,7 @@ class Case:
             shutil.copy2(src, dest)
             os.chmod(dest, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
         meta["evidence"][digest] = {
-            "kind": kind, "file": str(dest.relative_to(self.root)), "original_path": str(src.resolve()),
+            "kind": kind, "file": dest.relative_to(self.root).as_posix(), "original_path": str(src.resolve()),
             "size": src.stat().st_size, "added": _now(),
         }
         self._save_meta(meta)
@@ -126,12 +127,14 @@ class Case:
         """Re-hash every preserved file and report whether it still matches."""
         out = {}
         for digest, info in self.meta["evidence"].items():
-            out[digest] = sha256_file(self.root / info["file"]) == digest
+            out[digest] = sha256_file(self.evidence_path(digest)) == digest
         self._custody("evidence_verified", {"results": out})
         return out
 
     def evidence_path(self, digest: str) -> Path:
-        return self.root / self.meta["evidence"][digest]["file"]
+        # Case-relative, with either separator: cases made on Windows store "evidence\\<sha>\\name"
+        # (before v0.7), and a case moved to Linux (Docker, v0.7) must still find its files.
+        return self.root.joinpath(*re.split(r"[\\/]", self.meta["evidence"][digest]["file"]))
 
     # ---------- event store ----------
     def _connect(self) -> duckdb.DuckDBPyConnection:

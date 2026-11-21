@@ -1,0 +1,43 @@
+# PromptTracIR with Docker Compose (v0.7).
+#
+# Analyst UI for one case (http://127.0.0.1:8000):
+#   CASE=./runs/jt-i1-exfil-scripted/case docker compose up --build ui
+#
+# CLI against the same case:
+#   CASE=./runs/jt-i1-exfil-scripted/case docker compose run --rm ui ptir export-stix /case --validate
+#
+# Pinned local model (configs/local-model.json) plus the local-model layer:
+#   MODELS=/path/to/gguf/folder docker compose --profile llm up -d model
+#   CASE=... docker compose run --rm ui ptir explain /case --llm-url http://model:8080
+#
+# Ports bind to 127.0.0.1 only: a case holds evidence, and the UI has no login.
+services:
+  ui:
+    build: .
+    image: prompttracir:0.7.0
+    ports:
+      - "127.0.0.1:${PTIR_PORT:-8000}:8000"
+    volumes:
+      - "${CASE:-./case}:/case"
+
+  model:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    profiles: ["llm"]
+    ports:
+      - "127.0.0.1:${LLM_PORT:-8080}:8080"
+    volumes:
+      - "${MODELS:-./models}:/models:ro"
+    # Same settings as the lab VM (configs/local-model.json): Qwen2.5-7B-Instruct Q4_K_M,
+    # chat template from the GGUF (--jinja), 16k context so a full chain fits one prompt.
+    command:
+      - "-m"
+      - "/models/${MODEL_FILE:-model.gguf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--jinja"
+      - "-c"
+      - "16384"
+      - "-t"
+      - "${LLM_THREADS:-4}"

@@ -108,7 +108,7 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
     summary = None
     if llm is not None and chain["nodes"]:
         from .llm import summarize
-        summary = summarize(pg, set(chain["nodes"]), llm)
+        summary = summarize(pg, set(chain["nodes"]), llm, chain)
 
     fp = config_mod.fingerprint(cfg)
     kinds = sorted({case.meta["evidence"][d]["kind"] for d in case.meta["evidence"]} -
@@ -187,9 +187,29 @@ def explain(case: Case, llm, tag: str | None = None) -> dict:
     chain = out.read_output("chain.json") or {}
     deviating = sorted({f["attrs"]["tool_call"] for f in findings if (f.get("attrs") or {}).get("tool_call")})
     classifications = [classify_tool_call(pg, tc, llm) for tc in deviating if tc in pg.g]
-    summary = summarize(pg, set(chain.get("nodes") or []), llm) if chain.get("nodes") else None
+    summary = summarize(pg, set(chain.get("nodes") or []), llm, chain) if chain.get("nodes") else None
     rec = {"classifications": classifications, "summary": summary, "run": run_record(llm)}
     out.write_output("llm.json", rec)
     case._custody("explained", {"tag": tag, "classified": len(classifications),
                                 "summary_sentences": (summary or {}).get("sentences", 0)})
+    return rec
+
+
+def revalidate_case(case: Case, tag: str | None = None) -> dict | None:
+    """v0.7: check a stored summary again with the current validation (relations included),
+    without calling the model. The previous outcome is kept under summary_before_revalidation."""
+    from .llm import revalidate
+    out = case.view(tag) if tag else case
+    rec = out.read_output("llm.json")
+    if not rec or not rec.get("summary"):
+        return None
+    pg = ProvGraph.from_json(out.read_output("graph.json"))
+    chain = out.read_output("chain.json") or {}
+    before = {k: rec["summary"].get(k) for k in ("sentences", "kept", "unsupported_rate_before_validation",
+                                                 "validation", "unsupported_by_reason")}
+    rec["summary"] = revalidate(pg, rec["summary"], chain)
+    rec["summary_before_revalidation"] = before
+    out.write_output("llm.json", rec)
+    case._custody("revalidated", {"tag": tag, "sentences": rec["summary"]["sentences"],
+                                  "kept": rec["summary"]["kept"]})
     return rec

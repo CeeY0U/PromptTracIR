@@ -159,6 +159,8 @@ Done when: unsupported claims are at most 5 percent before validation and zero a
 
 Status (2026-11-21, v0.6.0): built and tested with model doubles. Replies are constrained by a JSON schema whose ID fields are enums of the input's IDs (llama-server enforces it as a grammar; other servers fall back to JSON mode). The summary sees the attack chain and its one-hop neighbourhood (at most 60 nodes) with each node's facts, and answers as cited sentences. Validation now also drops a sentence that names a file, program, domain or address its cited nodes do not show. `configs/local-model.json` pins the model, quantisation, server command and sampling, and every `llm.json` records the pin, the served model and the prompt version. `ptir explain` runs the local-model layer on analysed cases (`--families` for the training split) and `eval-batch` reports unsupported claims before and after validation. Not done: the measurement itself and any prompt tuning, which need the local model on the lab VM; the LoRA stretch goal is not started. Also in v0.6.0, the fixes from the v0.5 lab runs (CHANGELOG): on the 31 lab runs, malicious-call F1 0.909 -> 1.0, link precision 0.875 -> 1.0, contradictions on untampered runs 7 -> 0, clean runs with any finding 0 of 21 (findings without a tool call now count), and the frozen v0.1 cue-only baseline (`--localizer heuristic-v01`) at localization F1 0.75, span overlap 0.703, chain edge F1 0.941, against 1.0 for the segment localizer.
 
+Status (2026-11-21, v0.6 measured): `ptir explain` ran on the lab VM (Qwen2.5-7B-Instruct Q4_K_M, `-c 16384 -t 4`, 5 to 10 minutes per run on CPU) over the 13 runs with an attack chain. With the v0.6 checks (cited IDs exist, named entities appear in the cited nodes): 1 of 75 sentences unsupported before validation (0.013) and 0 after; eval-batch without the tampered copy 0.015 (1 of 68), training split 0.021 (1 of 48), test families 0 of 20. Verdicts: 13 of 13 gold malicious calls classified injection-driven, the directing fragment equal to the gold injected fragment 13 of 13, no unknown IDs. So the v0.6 "done when" is met as the metric was defined. Caveat from reading the summaries: several kept sentences named grounded things but stated a wrong relation (a tool call credited with another call's file, or the injection said to come from the user's prompt while the verdicts named the right fragment). v0.7.0 adds a relationship check (below); re-checking the same 75 sentences with it gives 16 of 75 unsupported before validation (0.213; training split 0.229) and 0 after, so with relations counted the v0.6 prompt misses the 5 percent target. The v0.7 prompt (chain analysis plus relation rules) has not been measured yet.
+
 ### v0.7: Analyst interface and export (Phase 6, build)
 
 Goal: something an analyst can use and the team can demo.
@@ -169,6 +171,15 @@ Goal: something an analyst can use and the team can demo.
 - React port, or a recorded decision to keep the single page.
 
 Done when: `docker compose up` serves a real case and the STIX bundle passes a validator.
+
+Status (2026-11-21, v0.7.0): built and tested.
+- Views: the single page now opens on an attack flow (request, entry point with its injected text, then each tool call with the processes it ran, its effects and findings, and the first deviation marked), plus the chain and full graphs, a timeline filtered by source, text and chain membership with each row coloured by evidence state, and an evidence tab with the preserved files, the custody log and a hash check. Clicking any record opens the raw record from the preserved copy (JSON line, CSV row with its header, Zeek TSV row by `#fields`, EVTX record by RecordID, Volatility row or inventory entry). Cytoscape is vendored, so the UI works without internet.
+- `ptir export-stix CASE [--validate]`: a STIX 2.1 bundle (processes, files, connections, domains, URLs, observed data per finding, sightings, notes, incident, report) tagged with ATLAS AML.T0051.001, AML.T0053, AML.T0086 and ATT&CK T1700, T1105, T1053.005, T1547.001, T1565.001. Evidence states, ProcessGuids and record IDs travel in a property extension (`docs/STIX_EXTENSION.md`). All 35 lab cases (33 runs and 2 tampered copies) pass the OASIS `stix2-validator` with warnings only; exports are deterministic.
+- `Dockerfile` and `docker-compose.yml`: the UI and CLI (`ui`) and the pinned llama.cpp server (`model`, profile `llm`). Not yet run on a lab machine.
+- Relationship check for local-model summaries: a sentence is dropped when its verb or claim does not match the graph (an injection said to come from anything but the entry point or its source, a deviation claim not citing the first deviating call, an effect not reachable from the cited actor, or a verb the cited actor cannot do). `ptir explain --revalidate` re-checks stored summaries without the model. The summary prompt now also receives the entry points and first deviation.
+- Graph fix: an in-process write (no child process) goes to the tool call whose trace claims it when it lands up to 0.25 s outside that call's window, so jt-i1's `notes.md` is no longer credited to the curl upload. Test 7 metrics on the 33 runs are unchanged.
+- Decision: keep the single-page UI (decision 3 below).
+Not done: the Docker check on a lab machine and the v0.7 prompt measurement on the VM.
 
 ### v0.8: Evaluation release (Phase 6, experiments)
 
@@ -254,9 +265,18 @@ pipeline on legitimate and refused runs only. Per-slot detail: `docs/DATASET_PRO
 
 Limits to state in the report: per-family figures rest on two runs and are indicative; real-model
 successful attacks exist for data transmission only; Claude Code figures show coverage, not
-accuracy, and no Claude Code run followed a payload; impact accuracy rests on the four
-exfiltration runs collected before the file inventory existed (two optional scripted runs would
-measure it); the dataset is half the size given in the proposal.
+accuracy, and no Claude Code run followed a payload; impact accuracy is 2 of 6 because the four
+exfiltration runs collected before the file inventory existed are scored probable against a gold
+confirmed (the two later scripted runs, jt-i1 and jt-i2, are confirmed); the dataset is half the
+size given in the proposal.
+
+Extra runs on 21 Nov: jt-i1 and jt-i2 (scripted `web_exfil_01` with Zeek, the file inventory and a
+canary the sink received) were collected on v0.6.0 to measure impact accuracy. With them the
+scored set is 33 runs (30 slots plus jt-v1, jt-i1 and jt-i2) and two tampered copies. On v0.6.0
+every Table III target that can be measured so far is met on those 33 runs (localization, span
+overlap, malicious calls, link precision, first deviation, chain edge, node and path 1.0,
+attribution 0.99, 0 of 21 clean runs with a finding, 2 of 2 tampered copies contradicted, no
+connection-only case labelled confirmed); impact accuracy is 0.333 for the reason above.
 
 Rules (also in `docs/DATASET_PROGRESS.md`):
 
@@ -285,7 +305,9 @@ Rules (also in `docs/DATASET_PROGRESS.md`):
    At about two lab runs an hour, the 16 runs still needed on 16 Nov are about eight hours in total. If the dataset is short on 26 Nov, freeze what exists and report the counts per cell (`docs/DATASET_PROGRESS.md`) rather than slipping v0.8. The analyst study (Plaso / Timesketch comparison) is the first thing to cut if time runs out.
 
    Progress on 21 Nov: v0.5 is released, v0.6.0 is built (two days ahead of the table), and the dataset is complete (30 slots, counted by outcome, section 5). Left before the freeze: the v0.6 narrative measurement on the lab VM, and optionally two scripted exfiltration runs for impact accuracy.
+
+   Progress later on 21 Nov: v0.6.0 is released and measured (RQ4, v0.6 status), the two scripted exfiltration runs are in (jt-i1, jt-i2), and v0.7.0 is built four days ahead of the table. Left before the freeze: the v0.7 prompt measurement on the VM and the Docker check.
 2. **LangGraph.** The proposal names a LangGraph agent; the harness is a plain loop. Port it, or record the change in the report.
-3. **React.** The proposal names React; the UI is one HTML page. Same choice.
+3. **React.** The proposal names React; the UI is one HTML page. Decided on 21 Nov (v0.7.0): keep the single page. It needs no build step or Node toolchain, ships inside the Python package and the Docker image, works offline with the vendored Cytoscape, and every view the proposal describes (attack flow, timeline, evidence, raw records, export) is in it. A React port would add a second toolchain four days before the freeze without adding a view. Record the change in the report.
 4. **AttnTrace.** It needs attention weights that an OpenAI-compatible server does not return. Keep it optional unless someone wants to run the model through a library that exposes them.
 5. **Ethics clearance** for the analyst study has lead time. Ask about it now, not at v0.8.

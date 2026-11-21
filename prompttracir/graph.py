@@ -291,7 +291,12 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
             if not cands:
                 continue
             names = [x.lower() for x in (e.object, e.attrs.get("dst_host")) if x]
-            claimants = [tc for tc in cands
+            # v0.7: a call whose trace claims the object wins even when the effect lands a few
+            # ms outside its window: the clock-offset estimate and Sysmon's millisecond times
+            # can put write_file's own write inside the previous call's window (jt-i1: python.exe
+            # created notes.md 2 ms before write_file's corrected start, inside the curl call's).
+            near = [tc for tc, (lo, hi) in windows.items() if lo - CLAIM_SLACK_S <= t <= hi + CLAIM_SLACK_S]
+            claimants = [tc for tc in near
                          if any(c in n or n in c for c in claimed[tc] for n in names)]
             kind, rel = HOST_EFFECTS[e.action]
             for tcid in claimants or cands[:1]:
@@ -376,6 +381,7 @@ def in_process_windows(calls: list[CanonicalEvent], results: dict[str, Canonical
 
 
 DNS_TO_CONN_S = 60.0
+CLAIM_SLACK_S = 0.25
 
 
 def _zeek_without_sysmon(pg: ProvGraph, events: list[CanonicalEvent], zeek: list[CanonicalEvent],

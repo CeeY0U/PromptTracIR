@@ -14,9 +14,10 @@
   ptir eval CASE GROUND_TRUTH.json
   ptir eval-batch ROOT [--out DIR] [--reviewed-only] [--families F,...] [--exclude-families F,...]
                        [--reanalyze] [--config FILE] [--without KIND ...] [--tag NAME]
-  ptir explain CASE_OR_ROOT --llm-url URL [--llm-model M] [--tag NAME] [--families F,...]
-                       (v0.6: local-model verdicts and grounded summary of analysed cases)
+  ptir explain CASE_OR_ROOT --llm-url URL [--llm-model M] [--tag NAME] [--families F,...] [--timeout S]
+  ptir explain CASE_OR_ROOT --revalidate         (v0.7: re-check stored summaries, no model)
   ptir llm-pin                                   (print the pinned local model and server settings)
+  ptir export-stix CASE [--out FILE] [--tag NAME] [--validate]   (v0.7: STIX 2.1 bundle, ATLAS/ATT&CK tags)
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ from .case import Case
 LOCALIZERS = ["auto", "segment", "heuristic", "heuristic-v01", "replay", "group"]
 
 
-CASE_COMMANDS = {"add", "import-adfir", "ingest", "analyze", "verify", "serve", "eval"}
+CASE_COMMANDS = {"add", "import-adfir", "ingest", "analyze", "verify", "serve", "eval", "export-stix"}
 
 
 def _msys_hint(path: str) -> str:
@@ -106,13 +107,23 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("explain", help="local-model verdicts and grounded summary for analysed case(s)")
     p.add_argument("target", help="a case directory, or a folder of runs (ROOT/<run>/case)")
-    p.add_argument("--llm-url", required=True, help="OpenAI-compatible server, e.g. http://127.0.0.1:8080")
+    p.add_argument("--llm-url", help="OpenAI-compatible server, e.g. http://127.0.0.1:8080")
     p.add_argument("--llm-model", default="local")
+    p.add_argument("--timeout", type=float, default=1800,
+                   help="seconds per model call (a CPU-only summary takes minutes; default 1800)")
+    p.add_argument("--revalidate", action="store_true",
+                   help="no model: check the stored summaries again with the current validation (v0.7)")
     p.add_argument("--tag", help="explain output/TAG/ instead of output/")
     p.add_argument("--case-name", default="case")
     p.add_argument("--families", help="only runs of these families (comma-separated): the training split")
 
     sub.add_parser("llm-pin", help="print the pinned local model and server settings (configs/local-model.json)")
+
+    p = sub.add_parser("export-stix", help="write the case as a STIX 2.1 bundle tagged with MITRE ATLAS / ATT&CK")
+    p.add_argument("case")
+    p.add_argument("--out", help="output file (default: CASE/output/stix_bundle.json)")
+    p.add_argument("--tag", help="export output/TAG/ instead of output/")
+    p.add_argument("--validate", action="store_true", help="check it with the OASIS validator (pip install stix2-validator)")
 
     a = ap.parse_args(argv)
 
@@ -207,6 +218,26 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(res, indent=2))
     elif a.cmd == "explain":
         return _explain(a)
+    elif a.cmd == "export-stix":
+        from .stix import export_case, validate
+        case = Case(a.case)
+        bundle = export_case(case, tag=a.tag)
+        out = Path(a.out) if a.out else case.root / "output" / (f"{a.tag}/" if a.tag else "") / "stix_bundle.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+        kinds = {}
+        for o in bundle["objects"]:
+            kinds[o["type"]] = kinds.get(o["type"], 0) + 1
+        techs = sorted(r["external_id"] for o in bundle["objects"] if o["type"] == "attack-pattern"
+                       for r in o["external_references"])
+        print(f"wrote {out}: {len(bundle['objects'])} objects {kinds}")
+        print(f"techniques: {', '.join(techs) or 'none'}")
+        if a.validate:
+            ok, msgs = validate(bundle)
+            for m in msgs:
+                print("  " + m)
+            print("STIX 2.1 validator: " + ("valid" if ok else "INVALID"))
+            return 0 if ok else 1
     elif a.cmd == "llm-pin":
         from .llm import PIN_FILE, load_pin
         print(f"# {PIN_FILE}")
@@ -259,8 +290,6 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
 
 
 def _explain(a) -> int:
@@ -281,7 +310,25 @@ def _explain(a) -> int:
     if not cases:
         print(f"no analysed case under {target}", file=sys.stderr)
         return 2
-    llm = LocalLLM(a.llm_url, a.llm_model)
+    if a.revalidate:
+        from .pipeline import revalidate_case
+        sent = drop = 0
+        for name, c in cases:
+            rec = revalidate_case(Case(c), tag=a.tag)
+            if rec is None:
+                continue
+            s, b = rec["summary"], rec["summary_before_revalidation"]
+            sent += s["sentences"]
+            drop += len(s["dropped"])
+            print(f"{name:28} sentences {s['sentences']}  dropped {len(s['dropped'])} (was "
+                  f"{b['sentences'] - b['kept'] if b.get('kept') is not None else '?'})  {s['unsupported_by_reason']}")
+        if sent:
+            print(f"all: {drop} of {sent} sentences unsupported before validation ({drop / sent:.3f}), 0 after")
+        return 0
+    if not a.llm_url:
+        print("--llm-url is required (or --revalidate)", file=sys.stderr)
+        return 2
+    llm = LocalLLM(a.llm_url, a.llm_model, timeout=a.timeout)
     served = llm.served_model()
     pinned = (llm.pin.get("model") or {}).get("file")
     print(f"server model: {served}   pinned: {pinned}")
@@ -291,8 +338,8 @@ def _explain(a) -> int:
     for name, c in cases:
         try:
             rec = explain(Case(c), llm, tag=a.tag)
-        except ValueError as e:
-            print(f"{name}: {e}", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 - one failed run (timeout, server error) does not stop the rest
+            print(f"{name}: FAILED {e!r}", file=sys.stderr)
             continue
         s = rec.get("summary") or {}
         sent += s.get("sentences", 0)
@@ -302,3 +349,7 @@ def _explain(a) -> int:
     if sent:
         print(f"all: {drop} of {sent} sentences unsupported before validation ({drop / sent:.3f}), 0 after")
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

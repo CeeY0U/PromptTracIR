@@ -4,20 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PromptTracIR</title>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape@3/dist/cytoscape.min.js"></script>
+<link rel="icon" href="data:,">
+<!-- v0.7: Cytoscape is served from /static (vendored, MIT), so the page works offline in the lab -->
+<script src="/static/cytoscape.min.js"></script>
 <style>
   :root { --bg:#0f1216; --panel:#171b21; --line:#2a313b; --text:#d9dee5; --muted:#8a94a3;
           --agent:#e5534b; --human:#539bf5; --obs:#9aa4b2; --corr:#57ab5a; --inf:#e0823d; --contra:#f47067; }
   * { box-sizing:border-box; }
   body { margin:0; font:13px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text);
-         display:grid; grid-template-columns:320px 1fr 360px; grid-template-rows:44px 1fr; height:100vh; }
-  header { grid-column:1/4; display:flex; align-items:center; gap:16px; padding:0 14px;
+         display:grid; grid-template-columns:320px 1fr 380px; grid-template-rows:44px 1fr; height:100vh; }
+  header { grid-column:1/4; display:flex; align-items:center; gap:8px; padding:0 14px;
            border-bottom:1px solid var(--line); background:var(--panel); }
-  header b { font-size:14px; letter-spacing:.3px; }
-  header .muted { color:var(--muted); }
-  header button { background:transparent; color:var(--text); border:1px solid var(--line); border-radius:6px;
-                  padding:4px 10px; cursor:pointer; }
-  header button.on { background:#2d333b; }
+  header b { font-size:14px; letter-spacing:.3px; margin-right:6px; }
+  .muted, .k { color:var(--muted); }
+  button, .btn { background:transparent; color:var(--text); border:1px solid var(--line); border-radius:6px;
+           padding:4px 10px; cursor:pointer; font:inherit; text-decoration:none; }
+  button.on { background:#2d333b; }
   aside, #detail { overflow:auto; padding:12px; background:var(--panel); }
   aside { border-right:1px solid var(--line); }
   #detail { border-left:1px solid var(--line); }
@@ -26,80 +28,118 @@
   .card { border:1px solid var(--line); border-radius:6px; padding:8px; margin-bottom:6px; cursor:pointer; }
   .card:hover { border-color:#444c56; }
   .sev-high { border-left:3px solid var(--agent); } .sev-medium { border-left:3px solid var(--inf); }
-  .pill { display:inline-block; padding:0 6px; border-radius:9px; font-size:11px; background:#2d333b; margin-right:4px; }
+  .sev-info { border-left:3px solid var(--obs); }
+  .pill { display:inline-block; padding:0 6px; border-radius:9px; font-size:11px; background:#2d333b; margin:0 4px 2px 0; }
   .confirmed { background:#5c1f1c; } .probable { background:#5a3a14; } .possible { background:#4a4314; }
-  #main { position:relative; }
-  #cy, #timeline { position:absolute; inset:0; }
-  #timeline { overflow:auto; display:none; padding:10px; }
+  .st-corroborated { color:var(--corr); border:1px solid var(--corr); background:transparent; }
+  .st-observed { color:var(--obs); border:1px solid var(--obs); background:transparent; }
+  .st-inferred { color:var(--inf); border:1px dashed var(--inf); background:transparent; }
+  .st-contradicted { color:var(--contra); border:1px solid var(--contra); background:#3a1715; }
+  .at-agent { color:var(--agent); } .at-human { color:var(--human); }
+  #main { position:relative; overflow:hidden; }
+  #cy, .pane { position:absolute; inset:0; }
+  .pane { overflow:auto; display:none; padding:12px; }
   table { border-collapse:collapse; width:100%; font-size:12px; }
   td, th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
-  tr:hover td { background:#1c2128; cursor:pointer; }
+  tr.click:hover td { background:#1c2128; cursor:pointer; }
+  tr.row-contradicted td:first-child { border-left:3px solid var(--contra); }
+  tr.row-corroborated td:first-child { border-left:3px solid var(--corr); }
+  tr.row-observed td:first-child { border-left:3px solid var(--obs); }
+  tr.row-inferred td:first-child { border-left:3px dashed var(--inf); }
   pre { white-space:pre-wrap; word-break:break-all; background:#0f1216; border:1px solid var(--line);
-        padding:8px; border-radius:6px; font-size:11.5px; }
-  .legend { position:absolute; left:10px; bottom:10px; background:rgba(23,27,33,.9); border:1px solid var(--line);
-            border-radius:6px; padding:6px 10px; font-size:11px; color:var(--muted); }
+        padding:8px; border-radius:6px; font-size:11.5px; margin:4px 0; }
+  .legend { position:absolute; left:10px; bottom:10px; background:rgba(23,27,33,.92); border:1px solid var(--line);
+            border-radius:6px; padding:6px 10px; font-size:11px; color:var(--muted); z-index:5; }
   .legend span { margin-right:10px; }
-  .k { color:var(--muted); }
+  .step { border:1px solid var(--line); border-radius:8px; padding:10px; margin:0 0 10px 0; background:var(--panel); }
+  .step.dev { border-color:var(--agent); }
+  .step h4 { margin:0 0 6px; font-size:13px; }
+  .stage { font-size:10px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); }
+  .arrow { text-align:center; color:var(--muted); margin:-4px 0 6px; }
+  .sub { margin:4px 0 0 14px; }
+  .filters { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  input, select { background:#0f1216; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; }
+  .drop { border-left:3px solid var(--contra); padding-left:6px; margin:4px 0; }
 </style>
 </head>
 <body>
 <header>
   <b>PromptTracIR</b><span class="muted" id="casename"></span>
   <span style="flex:1"></span>
-  <button id="bChain" class="on">Attack chain</button><button id="bFull">Full graph</button>
-  <button id="bTime">Timeline</button>
+  <button id="bFlow" class="on">Attack flow</button><button id="bChain">Chain graph</button>
+  <button id="bFull">Full graph</button><button id="bTime">Timeline</button><button id="bEv">Evidence</button>
+  <a class="btn" href="/api/export/stix" title="STIX 2.1 bundle with MITRE ATLAS / ATT&CK tags">Export STIX</a>
 </header>
 <aside>
   <h3>Entry point</h3><div id="entry"></div>
   <h3>Impact</h3><div id="impact"></div>
   <h3>Findings</h3><div id="findings"></div>
+  <h3>Local-model summary</h3><div id="narrative"></div>
 </aside>
 <div id="main">
   <div id="cy"></div>
-  <div id="timeline"></div>
+  <div id="flow" class="pane"></div>
+  <div id="timeline" class="pane"></div>
+  <div id="evidence" class="pane"></div>
   <div class="legend">
     <span style="color:var(--corr)">━ corroborated</span><span style="color:var(--obs)">━ observed</span>
     <span style="color:var(--inf)">┅ inferred</span><span style="color:var(--contra)">━ contradicted</span>
     <span style="color:var(--agent)">■ agent</span><span style="color:var(--human)">■ human</span>
   </div>
 </div>
-<div id="detail"><span class="muted">Click a node, edge, finding or timeline row.</span></div>
+<div id="detail"><span class="muted">Click a step, node, edge, finding or timeline row.</span></div>
 
 <script>
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const j = u => fetch(u).then(r => r.ok ? r.json() : null);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const j = (u, o) => fetch(u, o).then(r => r.ok ? r.json() : null);
+const st = s => s ? `<span class="pill st-${esc(s)}">${esc(s)}</span>` : "";
 const KIND = { session:"#768390", prompt:"#c69026", source:"#986ee2", fragment:"#b083f0", model_call:"#6cb6ff",
-  tool_call:"#f69d50", process:"#adbac7", file:"#8ddb8c", registry:"#e275ad", network:"#96d0ff", domain:"#96d0ff" };
-let cy;
+  tool_call:"#f69d50", process:"#adbac7", file:"#8ddb8c", registry:"#e275ad", network:"#96d0ff", domain:"#96d0ff",
+  logon_session:"#768390", data_object:"#8ddb8c" };
+let cy, graphView;
 
+// ---------- detail pane: canonical event + raw record ----------
+async function record(id) {
+  const e = await j("/api/events/" + encodeURIComponent(id));
+  if (!e) return `<pre>${esc(id)}: not found</pre>`;
+  return `<div class="card" data-raw="${esc(e.event_id)}"><span class="k">${esc(e.event_id)}</span><br>` +
+    `${esc(e.source)} · ${esc(e.action)} · ${esc(e.timestamp)}<br>${esc(e.command_line || e.object || e.attrs?.text || "")}` +
+    `<br><span class="k">${esc(e.raw.file)} @ ${esc(e.raw.locator)} (${esc(e.raw.parser)})</span>` +
+    `<div class="rawbox"></div></div>`;
+}
 async function evidence(ids) {
-  const out = [];
-  for (const id of (ids || []).slice(0, 8)) {
-    const e = await j("/api/events/" + encodeURIComponent(id));
-    if (e) out.push(`<pre><span class="k">${esc(e.event_id)}</span>\n${esc(e.source)} · ${esc(e.action)} · ${esc(e.timestamp)}\n` +
-      `${esc(e.command_line || e.object || e.attrs?.text || "")}\n<span class="k">raw: ${esc(e.raw.file)} @ ${esc(e.raw.locator)} (${esc(e.raw.parser)})</span></pre>`);
-  }
-  return out.join("");
+  const parts = [];
+  for (const id of (ids || []).slice(0, 10)) parts.push(await record(id));
+  if ((ids || []).length > 10) parts.push(`<span class="k">${ids.length - 10} more records</span>`);
+  return parts.join("") || '<span class="k">no records</span>';
 }
+function wireRaw() {
+  document.querySelectorAll("#detail [data-raw]").forEach(el => el.onclick = async () => {
+    const box = el.querySelector(".rawbox");
+    if (box.innerHTML) { box.innerHTML = ""; return; }
+    const r = await j("/api/raw/" + encodeURIComponent(el.dataset.raw));
+    box.innerHTML = `<h3>Raw record (${esc(r?.kind)}, ${esc(r?.locator)})</h3>` +
+      (r?.note ? `<pre>${esc(r.note)}</pre>` : "") +
+      (r?.content != null ? `<pre>${esc(r.format === "json" ? JSON.stringify(r.content, null, 2) : r.content)}</pre>` : "") +
+      `<span class="k">from the preserved copy ${esc(r?.file)} (sha256 ${esc((r?.evidence_id || "").slice(0, 16))}…)</span>`;
+  });
+}
+async function show(html, ids) {
+  $("#detail").innerHTML = html + `<h3>Supporting records <span class="k">(click one for the raw record)</span></h3>` + await evidence(ids);
+  wireRaw();
+}
+const showNode = d => show(`<h3>${esc(d.kind)}</h3><b>${esc(d.label)}</b><pre>${esc(JSON.stringify(d.attrs || {}, null, 2))}</pre>`, d.evidence);
+const showEdge = d => show(`<h3>edge</h3><b>${esc(d.relation)}</b> ${st(d.status)}<span class="pill">conf ${(+d.confidence).toFixed(2)}</span>` +
+  `<pre>${esc(d.src)}\n→ ${esc(d.dst)}</pre>` +
+  (Object.keys(d.signals || {}).length ? `<h3>Signals</h3><pre>${esc(JSON.stringify(d.signals, null, 2))}</pre>` : ""), d.evidence);
 
-async function showNode(d) {
-  const a = d.attrs || {};
-  let h = `<h3>${esc(d.kind)}</h3><b>${esc(d.label)}</b><pre>${esc(JSON.stringify(a, null, 2))}</pre>`;
-  h += `<h3>Supporting records</h3>` + await evidence(d.evidence);
-  $("#detail").innerHTML = h;
-}
-async function showEdge(d) {
-  let h = `<h3>edge</h3><b>${esc(d.relation)}</b> <span class="pill">${esc(d.status)}</span>` +
-    `<span class="pill">conf ${(+d.confidence).toFixed(2)}</span><pre>${esc(d.src)}\n→ ${esc(d.dst)}</pre>`;
-  if (Object.keys(d.signals || {}).length) h += `<h3>Signals</h3><pre>${esc(JSON.stringify(d.signals, null, 2))}</pre>`;
-  h += `<h3>Supporting records</h3>` + await evidence(d.evidence);
-  $("#detail").innerHTML = h;
-}
-
+// ---------- graph ----------
 async function loadGraph(view) {
+  graphView = view;
   const g = await j("/api/graph?view=" + view);
   if (!g) { $("#cy").innerHTML = '<p style="padding:20px">Run <code>ptir analyze</code> first.</p>'; return; }
+  window._graph = g;
   const els = [
     ...g.nodes.map(n => ({ data: { id: n.id, label: n.label, kind: n.kind, attribution: n.attrs?.attribution || "", raw: n } })),
     ...g.edges.map((e, i) => ({ data: { id: "e" + i, source: e.src, target: e.dst, label: e.relation, status: e.status, raw: e } })),
@@ -120,7 +160,7 @@ async function loadGraph(view) {
         "line-color": "#9aa4b2", "target-arrow-color": "#9aa4b2" } },
       { selector: 'edge[status = "corroborated"]', style: { "line-color": "#57ab5a", "target-arrow-color": "#57ab5a", width: 2.2 } },
       { selector: 'edge[status = "inferred"]', style: { "line-color": "#e0823d", "target-arrow-color": "#e0823d", "line-style": "dashed" } },
-      { selector: 'edge[status = "contradicted"]', style: { "line-color": "#f47067", "target-arrow-color": "#f47067" } },
+      { selector: 'edge[status = "contradicted"]', style: { "line-color": "#f47067", "target-arrow-color": "#f47067", width: 2.6 } },
       { selector: ":selected", style: { "overlay-opacity": .15, "overlay-color": "#fff" } },
     ],
   });
@@ -128,24 +168,91 @@ async function loadGraph(view) {
   cy.on("tap", "edge", ev => showEdge(ev.target.data("raw")));
 }
 
-function setView(v) {
-  for (const [b, n] of [["#bChain", "chain"], ["#bFull", "full"], ["#bTime", "time"]]) $(b).classList.toggle("on", n === v);
-  $("#cy").style.display = v === "time" ? "none" : "block";
-  $("#timeline").style.display = v === "time" ? "block" : "none";
-  if (v === "time") loadTimeline(); else loadGraph(v);
+// ---------- attack flow ----------
+async function loadFlow() {
+  const f = await j("/api/flow");
+  const g = await j("/api/graph?view=full");
+  window._nodes = Object.fromEntries((g?.nodes || []).map(n => [n.id, n]));
+  window._edges = g?.edges || [];
+  if (!f || !f.steps.length) { $("#flow").innerHTML = '<p class="k">No attack chain: nothing deviated from the task, or the case is not analysed.</p>'; return; }
+  const html = f.steps.map((s, i) => {
+    const arrow = i ? '<div class="arrow">↓</div>' : "";
+    const nid = esc(s.node.id);
+    if (s.stage === "request") return arrow + `<div class="step" data-node="${nid}"><div class="stage">user request</div><h4>${esc(s.text)}</h4></div>`;
+    if (s.stage === "entry_point") return arrow + `<div class="step" data-node="${nid}"><div class="stage">entry point · injected content</div>` +
+      `<h4>${esc(s.source)}</h4><span class="pill">${esc(s.method)}</span><span class="pill">conf ${(+s.confidence).toFixed(2)}</span>` +
+      `<pre>${esc(s.text)}</pre></div>`;
+    const procs = s.processes.map(p => `<div class="sub" data-node="${esc(p.id)}">▸ <b class="at-${esc(p.attribution)}">${esc(p.label)}</b> ` +
+      `<span class="k">${esc((p.command_line || "").slice(0, 160))}</span></div>`).join("");
+    const fx = s.effects.map(e => `<div class="sub" data-node="${esc(e.id)}">${esc(e.relation)} → <b>${esc(e.label)}</b> ${st(e.status)}</div>`).join("");
+    const fnd = s.findings.map(x => `<div class="sub"><span class="pill">${esc(x.finding_id)}</span><span class="pill">${esc(x.kind)}</span>${esc(x.summary)}</div>`).join("");
+    const infl = s.influenced_by.map(e => `<span class="pill">influenced by ${esc(e.src.split(":").pop())}</span>${st(e.status)}`).join("");
+    return arrow + `<div class="step ${s.deviation ? "dev" : ""}" data-node="${nid}"><div class="stage">tool call${s.deviation ? " · first deviation" : ""}` +
+      `${s.issued_by.length ? " · issued by " + esc(s.issued_by.join(", ")) : ""}</div>` +
+      `<h4>${esc(s.node.label)}</h4>${infl}${procs}${fx}${fnd}</div>`;
+  }).join("");
+  $("#flow").innerHTML = html;
+  $("#flow").querySelectorAll("[data-node]").forEach(el => el.onclick = ev => {
+    ev.stopPropagation(); const n = window._nodes[el.dataset.node]; if (n) showNode(n);
+  });
 }
 
+// ---------- timeline ----------
 async function loadTimeline() {
-  const rows = await j("/api/timeline") || [];
-  $("#timeline").innerHTML = `<table><tr><th>time (UTC)</th><th>source</th><th>action</th><th>pid</th><th>detail</th></tr>` +
-    rows.map(r => `<tr data-id="${esc(r.event_id)}"><td>${esc(r.ts.slice(11, 23))}</td><td>${esc(r.source)}</td>` +
-      `<td>${esc(r.action)}</td><td>${esc(r.pid)}</td><td>${esc(r.detail)}</td></tr>`).join("") + "</table>";
-  $("#timeline").querySelectorAll("tr[data-id]").forEach(tr => tr.onclick = async () =>
-    $("#detail").innerHTML = "<h3>event</h3>" + await evidence([tr.dataset.id]));
+  if (!$("#timeline").dataset.ready) {
+    $("#timeline").innerHTML = `<div class="filters"><select id="tSrc"><option value="">all sources</option></select>` +
+      `<input id="tQ" placeholder="search command, file, host, event id" size="34">` +
+      `<label><input type="checkbox" id="tChain"> attack chain only</label><span class="k" id="tCount"></span></div><div id="tRows"></div>`;
+    $("#timeline").dataset.ready = "1";
+    $("#tSrc").onchange = $("#tChain").onchange = loadTimeline;
+    let t; $("#tQ").oninput = () => { clearTimeout(t); t = setTimeout(loadTimeline, 300); };
+  }
+  const p = new URLSearchParams({ limit: 3000 });
+  if ($("#tSrc").value) p.set("source", $("#tSrc").value);
+  if ($("#tQ").value) p.set("q", $("#tQ").value);
+  if ($("#tChain").checked) p.set("chain", "true");
+  const r = await j("/api/timeline?" + p) || { rows: [], sources: {} };
+  if ($("#tSrc").options.length === 1)
+    Object.entries(r.sources).sort().forEach(([s, n]) => $("#tSrc").add(new Option(`${s} (${n})`, s)));
+  $("#tCount").textContent = `${r.shown} of ${r.matched} events`;
+  $("#tRows").innerHTML = `<table><tr><th>time (UTC)</th><th>source</th><th>action</th><th>pid</th><th>state</th><th>detail</th></tr>` +
+    r.rows.map(x => `<tr class="click ${x.state ? "row-" + esc(x.state) : ""}" data-id="${esc(x.event_id)}"><td>${esc(x.ts.slice(11, 23))}</td>` +
+      `<td>${esc(x.source)}</td><td>${esc(x.action)}</td><td>${esc(x.pid)}</td><td>${st(x.state)}${x.in_chain ? '<span class="pill">chain</span>' : ""}</td>` +
+      `<td>${esc(x.detail)}</td></tr>`).join("") + "</table>";
+  $("#tRows").querySelectorAll("tr[data-id]").forEach(tr => tr.onclick = () => show("<h3>event</h3>", [tr.dataset.id]));
+}
+
+// ---------- evidence ----------
+async function loadEvidence() {
+  const e = await j("/api/evidence") || { items: [], custody: [] };
+  $("#evidence").innerHTML = `<div class="filters"><button id="vBtn">Verify hashes</button><span id="vRes" class="k"></span></div>` +
+    `<h3>Preserved evidence (${e.items.length} files, read-only copies)</h3><table><tr><th>kind</th><th>file</th><th>size</th><th>sha256</th><th>original path</th></tr>` +
+    e.items.map(i => `<tr><td>${esc(i.kind)}</td><td>${esc((i.file || "").split("/").pop())}</td><td>${esc(i.size)}</td>` +
+      `<td class="k">${esc(i.sha256.slice(0, 16))}…</td><td class="k">${esc(i.original_path)}</td></tr>`).join("") + "</table>" +
+    `<h3>Chain of custody (${e.custody.length} entries)</h3><table><tr><th>time</th><th>actor</th><th>action</th><th>details</th></tr>` +
+    e.custody.map(c => `<tr><td>${esc(c.time)}</td><td>${esc(c.actor)}</td><td>${esc(c.action)}</td>` +
+      `<td class="k">${esc(JSON.stringify(c.details).slice(0, 200))}</td></tr>`).join("") + "</table>";
+  $("#vBtn").onclick = async () => {
+    $("#vRes").textContent = "hashing…";
+    const r = await j("/api/verify", { method: "POST" });
+    const bad = Object.entries(r?.results || {}).filter(([, ok]) => !ok).map(([d]) => d.slice(0, 12));
+    $("#vRes").textContent = r ? (r.ok ? `all ${Object.keys(r.results).length} files match their SHA-256` : `MISMATCH: ${bad.join(", ")}`) : "failed";
+  };
+}
+
+// ---------- views ----------
+function setView(v) {
+  for (const [b, n] of [["#bFlow", "flow"], ["#bChain", "chain"], ["#bFull", "full"], ["#bTime", "time"], ["#bEv", "ev"]])
+    $(b).classList.toggle("on", n === v);
+  $("#cy").style.display = (v === "chain" || v === "full") ? "block" : "none";
+  $("#flow").style.display = v === "flow" ? "block" : "none";
+  $("#timeline").style.display = v === "time" ? "block" : "none";
+  $("#evidence").style.display = v === "ev" ? "block" : "none";
+  if (v === "flow") loadFlow(); else if (v === "time") loadTimeline(); else if (v === "ev") loadEvidence(); else loadGraph(v);
 }
 
 function focus(ids) {
-  if (!cy) return;
+  if (!cy || $("#cy").style.display === "none") { setView("chain"); setTimeout(() => focus(ids), 400); return; }
   cy.elements().unselect();
   const sel = cy.nodes().filter(n => ids.includes(n.id()));
   sel.select(); if (sel.length) cy.animate({ fit: { eles: sel, padding: 120 } }, { duration: 300 });
@@ -166,16 +273,27 @@ async function sidebar() {
     `<ul style="margin:4px 0 0 16px;padding:0">${i.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>`).join("")
     || '<span class="k">no external egress</span>';
   const f = await j("/api/findings") || [];
-  $("#findings").innerHTML = f.map(x => `<div class="card sev-${esc(x.severity)}" data-ids='${esc(JSON.stringify(x.nodes))}'>` +
-    `<span class="pill">${esc(x.finding_id)}</span><span class="pill">${esc(x.kind)}</span><br>${esc(x.summary)}</div>`).join("")
+  $("#findings").innerHTML = f.map(x => `<div class="card sev-${esc(x.severity)}" data-ids='${esc(JSON.stringify(x.nodes))}' data-ev='${esc(JSON.stringify(x.evidence || []))}'>` +
+    `<span class="pill">${esc(x.finding_id)}</span><span class="pill">${esc(x.kind)}</span><span class="pill">${esc(x.severity)}</span><br>${esc(x.summary)}</div>`).join("")
     || '<span class="k">no findings</span>';
-  document.querySelectorAll(".card[data-ids]").forEach(el => el.onclick = () => focus(JSON.parse(el.dataset.ids)));
+  const llm = await j("/api/llm") || {};
+  const s = llm.summary;
+  $("#narrative").innerHTML = s ? `<div class="k">${esc(s.kept)} of ${esc(s.sentences)} sentences kept · checks: ${esc(s.validation || "ids+entities")}</div>` +
+    `<p>${esc(s.summary)}</p>` + (s.dropped || []).map(d => `<div class="drop k">dropped: ${esc(d.sentence)}<br><i>${esc(
+      (d.unsupported_relations || d.unsupported_entities || d.bad_citations || ["no citation"]).join("; "))}</i></div>`).join("")
+    : '<span class="k">none (ptir explain --llm-url URL)</span>';
+  document.querySelectorAll(".card[data-ids]").forEach(el => el.onclick = () => {
+    focus(JSON.parse(el.dataset.ids));
+    if (el.dataset.ev) show(`<h3>finding</h3>${el.innerHTML}`, JSON.parse(el.dataset.ev));
+  });
 }
 
+$("#bFlow").onclick = () => setView("flow");
 $("#bChain").onclick = () => setView("chain");
 $("#bFull").onclick = () => setView("full");
 $("#bTime").onclick = () => setView("time");
-sidebar(); setView("chain");
+$("#bEv").onclick = () => setView("ev");
+sidebar(); setView("flow");
 </script>
 </body>
 </html>

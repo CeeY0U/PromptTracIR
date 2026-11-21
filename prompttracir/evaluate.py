@@ -280,7 +280,8 @@ def narrative_scores(llm: dict | None, gt: dict) -> dict | None:
             "by_reason": s.get("unsupported_by_reason") or {},
             "classified": len(cls), "classified_correct": correct,
             "unsupported_ids": sum(len(c.get("unsupported_ids") or []) for c in cls),
-            "prompt_version": (llm.get("run") or {}).get("prompt_version")}
+            "prompt_version": (llm.get("run") or {}).get("prompt_version"),
+            "validation": s.get("validation") or "ids+entities"}
 
 
 def run_conditions(graph: dict) -> dict:

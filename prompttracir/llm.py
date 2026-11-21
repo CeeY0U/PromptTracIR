@@ -12,6 +12,16 @@ the graph in three layers:
   3. entities (v0.6) every file, program, domain or address a sentence names must appear in the
               nodes it cites (their labels and attributes). A sentence that names something its
               citations do not show is dropped as unsupported, even if every ID is real.
+  4. relations (v0.7) what a sentence says the cited nodes did must be in the graph between them:
+              - a cited effect (file, registry key, address, domain, data) must be reachable from
+                a cited tool call or process along effect edges (spawned, created, wrote, read,
+                connected, ...), not through later model turns;
+              - an action verb (wrote, sent, ran, read, fetched, connected, ...) needs a matching
+                edge from the cited tool call or its processes, or a tool of that kind;
+              - a sentence about the injection (injected, payload, hidden instruction) must cite
+                the fragment or source it came from.
+              The v0.6 lab summaries named real things but tied them to the wrong call (jt-i1:
+              "the curl call wrote notes.md"; "the injected instruction came from the session").
 
 The summary sees only the attack chain and its one-hop neighbourhood (at most MAX_NODES nodes),
 each node with the facts the graph holds for it, so the model can name things without guessing.
@@ -31,7 +41,7 @@ from .graph import ProvGraph
 from .schema import NodeKind
 from .traceback import context_fragments
 
-PROMPT_VERSION = "v0.6.0"
+PROMPT_VERSION = "v0.7.0"
 MAX_NODES = 60
 PIN_FILE = Path(__file__).resolve().parents[1] / "configs" / "local-model.json"
 
@@ -47,10 +57,17 @@ Only cite IDs that appear in the input. Reply with JSON only:
  "rationale": "one or two sentences", "evidence_ids": [ids]}"""
 
 SUMMARY_SYSTEM = """You write incident summaries for forensic analysts.
-You are given graph nodes (with an id, a kind, a label and facts) and the edges between them.
+You are given graph nodes (with an id, a kind, a label and facts), the edges between them, and
+the analysis: the entry point (the fragment of fetched or read content that carried the injected
+instruction) and the first deviating tool call.
 Write at most 8 short sentences in time order: what the user asked, where the injected
 instruction came from, which tool call deviated, and what it did on the host.
 Every sentence lists the IDs of the nodes that support it in "cites".
+- The injected instruction came from the entry-point fragment: cite that fragment. It did not
+  come from the user, the session or the agent.
+- A sentence about the deviation cites the first deviating tool call.
+- Say a tool call did something only if an edge from that call, or from a process it spawned,
+  shows it (spawned, created, wrote, read, connected). Each tool call did only its own actions.
 Name a file, program, domain or address only if it appears in the facts of a node you cite.
 Do not speculate about intent or about anything not in the input.
 Reply with JSON only: {"sentences": [{"text": "...", "cites": ["id", ...]}]}"""
@@ -218,13 +235,24 @@ def summary_schema(ids: list[str]) -> dict:
                                                    "items": {"type": "string", "enum": sorted(ids)}}}}}}}
 
 
-def summarize(pg: ProvGraph, node_ids: set[str], llm: ChatModel) -> dict:
+def chain_analysis(chain: dict | None) -> dict | None:
+    """The parts of chain.json the summary and its validation use."""
+    if not chain:
+        return None
+    return {"entry_points": [e["fragment"] for e in chain.get("entry_points") or [] if e.get("fragment")],
+            "first_deviation": chain.get("first_deviation")}
+
+
+def summarize(pg: ProvGraph, node_ids: set[str], llm: ChatModel, chain: dict | None = None) -> dict:
     ids = neighbourhood(pg, set(node_ids))
     idset = set(ids)
+    analysis = chain_analysis(chain)
     payload = {"nodes": [{"id": n, "kind": pg.node(n).kind.value, "label": pg.node(n).label,
                           "facts": node_facts(pg, n)} for n in ids],
                "edges": [{"src": e.src, "dst": e.dst, "relation": e.relation, "status": e.status.value}
                          for e in pg.edges() if e.src in idset and e.dst in idset]}
+    if analysis:
+        payload["analysis"] = analysis
     raw = _ask(llm, [{"role": "system", "content": SUMMARY_SYSTEM},
                      {"role": "user", "content": json.dumps(payload)}], summary_schema(ids), legacy_json=False)
     facts = {n: _fact_text(pg, n) for n in ids}
@@ -236,10 +264,10 @@ def summarize(pg: ProvGraph, node_ids: set[str], llm: ChatModel) -> dict:
     if isinstance(sentences, list):
         text = " ".join(f"{str(s.get('text', '')).strip()} " + "".join(f"[{c}]" for c in s.get("cites") or [])
                         for s in sentences if isinstance(s, dict))
-        out = validate_narrative(text.strip(), idset, facts)
+        out = validate_narrative(text.strip(), idset, facts, pg, analysis)
         out["format"] = "structured"
     else:                     # a model or server without JSON output: free text with [id] citations
-        out = validate_narrative(raw, idset, facts)
+        out = validate_narrative(raw, idset, facts, pg, analysis)
         out["format"] = "text"
     out["context_nodes"] = len(ids)
     return out
@@ -277,9 +305,104 @@ def _entity_supported(entity: str, cited_facts: str) -> bool:
     return entity in cited_facts or entity.replace("/", "\\") in cited_facts
 
 
-def validate_narrative(text: str, valid_ids: set[str], facts: dict[str, str] | None = None) -> dict:
-    """Keep only sentences whose citations all exist and, with `facts` (node id -> text the graph
-    holds), whose named files, programs, domains and addresses appear in what they cite.
+ACTOR_KINDS = {NodeKind.TOOL_CALL, NodeKind.PROCESS}
+EFFECT_KINDS = {NodeKind.FILE, NodeKind.REGISTRY, NodeKind.NETWORK, NodeKind.DOMAIN, NodeKind.DATA_OBJECT}
+# edges that carry an effect forward; "returned", "in_context", "issued" and "influenced" lead to
+# later model turns, and anything is reachable that way
+EFFECT_RELATIONS = {"spawned", "created", "wrote", "modified", "deleted", "set", "read", "connected",
+                    "resolved", "resolved_to", "holds", "contains", "uploaded", "fetched"}
+# action verb -> edge relations (from the cited call or its processes) or tools that do it
+ACTION_VERBS = [
+    ("write", re.compile(r"\b(writ(e|es|ing|ten)|wrote|sav(e|ed|es|ing)|modif\w*|overwr\w*|edit(ed|s)?|creat\w*)\b", re.I),
+     {"created", "wrote", "modified", "set", "deleted"},
+     {"write_file", "write", "edit", "multiedit", "notebookedit", "create_file"}),
+    ("send", re.compile(r"\b(upload\w*|sen(d|ds|t|ding)|exfiltrat\w*|transmit\w*|post(ed|s|ing)?)\b", re.I),
+     {"connected"}, set()),
+    ("contact", re.compile(r"\b(connect\w*|contact\w*)\b", re.I), {"connected", "resolved"}, {"http_get", "webfetch"}),
+    ("read", re.compile(r"\b(read|reads|reading|accessed|opened)\b", re.I), {"read"},
+     {"read_file", "read", "http_get", "webfetch", "grep", "glob"}),
+    ("fetch", re.compile(r"\b(fetch\w*|download\w*|retriev\w*)\b", re.I), {"connected", "created"},
+     {"http_get", "webfetch"}),
+    ("run", re.compile(r"\b(ran|run|runs|running|execut\w*|launch\w*|spawn\w*|invok\w*)\b", re.I), {"spawned", "ran"},
+     {"shell", "bash", "powershell"}),
+]
+INJECTION_RE = re.compile(r"\b(inject\w*|payload|hidden instruction|malicious instruction|planted)\b", re.I)
+DEVIATION_RE = re.compile(r"\bdeviat\w*", re.I)
+
+
+def _downstream(pg: ProvGraph, start: str) -> set[str]:
+    """Nodes reachable from `start` along effect edges only."""
+    seen, todo = {start}, [start]
+    while todo:
+        n = todo.pop()
+        for _, m, rel in pg.g.out_edges(n, keys=True):       # edges are keyed by relation
+            if m not in seen and rel in EFFECT_RELATIONS:
+                seen.add(m)
+                todo.append(m)
+    return seen
+
+
+def _abilities(pg: ProvGraph, actor: str) -> set[str]:
+    """Edge relations from the actor and the processes below it, plus its tool name. A process
+    ran by definition; a persistence command (schtasks /create, a Run key) created something even
+    though the service that stores it, not the process, writes the record."""
+    from .scope import PERSIST_CMD
+    nodes = {n for n in _downstream(pg, actor) if pg.node(n).kind in ACTOR_KINDS} | {actor}
+    out = {rel for n in nodes for _, _, rel in pg.g.out_edges(n, keys=True)}
+    for n in nodes:
+        node = pg.node(n)
+        if node.kind == NodeKind.PROCESS:
+            out.add("spawned" if n != actor else "ran")
+            cmd = (node.attrs.get("wrapped_command") or node.attrs.get("command_line") or "").lower()
+            if any(re.search(p, cmd) for p in PERSIST_CMD):
+                out.add("created")
+    tool = pg.node(actor).attrs.get("tool")
+    if tool:
+        out.add("tool:" + str(tool).lower())
+    return out
+
+
+def relation_problems(sentence: str, cites: list[str], pg: ProvGraph, analysis: dict | None = None) -> list[str]:
+    """What the sentence claims between its cited nodes that the graph (and, when given, the
+    analysis: entry points and first deviation) does not hold (v0.7)."""
+    kinds = {c: pg.node(c).kind for c in cites if c in pg.g}
+    actors = [c for c, k in kinds.items() if k in ACTOR_KINDS]
+    problems = []
+    if INJECTION_RE.search(sentence):
+        origin = [c for c, k in kinds.items() if k in (NodeKind.FRAGMENT, NodeKind.SOURCE)]
+        entries = set((analysis or {}).get("entry_points") or [])
+        if not origin:
+            problems.append("injection claim cites no fragment or source")
+        elif entries and not any(c in entries or any(e in pg.g and c in pg.g.predecessors(e) for e in entries)
+                                 for c in origin):
+            problems.append("injection claim cites a fragment that is not the entry point")
+    first = (analysis or {}).get("first_deviation")
+    if first and DEVIATION_RE.search(sentence) and first not in cites:
+        problems.append(f"deviation claim does not cite the first deviating call {first}")
+    if not actors:
+        return problems
+    reach = set().union(*(_downstream(pg, a) for a in actors))
+    for c, k in kinds.items():
+        if k in EFFECT_KINDS and c not in reach:
+            problems.append(f"{c} is not an effect of the cited tool call or process")
+    able = set().union(*(_abilities(pg, a) for a in actors))
+    # "t2 created / started the process curl.exe": a cited process below another cited actor
+    if any(b != a and b in _downstream(pg, a) and pg.node(b).kind == NodeKind.PROCESS
+           for a in actors for b in actors):
+        able |= {"created", "spawned"}
+    text = re.sub(r"\[[a-z_]+:[^\]]+\]", " ", sentence)
+    text = re.sub(r"\b[a-z_]+\([^)]*\)", " ", text)       # a quoted call such as write_file(...) is a name
+    for verb, rx, rels, tools in ACTION_VERBS:
+        if rx.search(text) and not (able & rels or any("tool:" + t in able for t in tools)):
+            problems.append(f"'{verb}' is not something the cited tool call or its processes did")
+    return problems
+
+
+def validate_narrative(text: str, valid_ids: set[str], facts: dict[str, str] | None = None,
+                       pg: ProvGraph | None = None, analysis: dict | None = None) -> dict:
+    """Keep only sentences whose citations all exist; with `facts` (node id -> text the graph
+    holds), whose named files, programs, domains and addresses appear in what they cite; and
+    with `pg`, whose stated relations between the cited nodes are in the graph (v0.7).
     Reports the unsupported-claim rate before validation (after is zero by construction)."""
     sentences = [s.strip() for s in re.split(r"(?<=[.!?\]])\s+(?=[A-Z])", text or "") if s.strip()]
     kept, dropped = [], []
@@ -296,15 +419,42 @@ def validate_narrative(text: str, valid_ids: set[str], facts: dict[str, str] | N
                 dropped.append({"sentence": s, "bad_citations": [], "uncited": False,
                                 "unsupported_entities": missing})
                 continue
+        if pg is not None:
+            problems = relation_problems(s, cites, pg, analysis)
+            if problems:
+                dropped.append({"sentence": s, "bad_citations": [], "uncited": False,
+                                "unsupported_relations": problems})
+                continue
         kept.append(s)
     total = len(sentences)
     rate = round(len(dropped) / total, 3) if total else 0.0
     return {"summary": " ".join(kept), "dropped": dropped, "sentences": total, "kept": len(kept),
+            "raw_sentences": sentences,
             "unsupported_rate_before_validation": rate,
             "unsupported_rate_after_validation": 0.0,
+            "validation": "ids+entities+relations" if pg is not None else
+                          ("ids+entities" if facts is not None else "ids"),
             "unsupported_by_reason": {
                 "bad_or_missing_citation": sum(1 for d in dropped if d["bad_citations"] or d["uncited"]),
-                "entity_not_in_cited_nodes": sum(1 for d in dropped if d.get("unsupported_entities"))}}
+                "entity_not_in_cited_nodes": sum(1 for d in dropped if d.get("unsupported_entities")),
+                "relation_not_in_graph": sum(1 for d in dropped if d.get("unsupported_relations"))}}
+
+
+def revalidate(pg: ProvGraph, summary: dict, chain: dict) -> dict:
+    """Validate a stored summary again with the current checks, without calling the model.
+    Uses the stored raw sentences; summaries from v0.6 kept only the outcome, so their
+    sentences are the kept ones plus the dropped ones (the original order is not kept)."""
+    raw = summary.get("raw_sentences")
+    if raw is None:
+        kept = [s.strip() for s in re.split(r"(?<=[.!?\]])\s+(?=[A-Z])", summary.get("summary") or "") if s.strip()]
+        raw = kept + [d["sentence"] for d in summary.get("dropped") or []]
+    ids = neighbourhood(pg, set(chain.get("nodes") or []))
+    facts = {n: _fact_text(pg, n) for n in ids}
+    out = validate_narrative(" ".join(raw), set(ids), facts, pg, chain_analysis(chain))
+    out["format"] = summary.get("format")
+    out["context_nodes"] = len(ids)
+    out["revalidated_from"] = summary.get("validation") or "ids+entities (v0.6)"
+    return out
 
 
 def run_record(llm) -> dict:
