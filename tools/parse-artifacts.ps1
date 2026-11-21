@@ -11,8 +11,9 @@
     RUN\evidence\vol\           vol_pstree.json, vol_cmdline.json, vol_netscan.json
 
   `ptir add-run` then picks these up as the ez_* and vol_* kinds (prompttracir/runs.py). The raw
-  files stay where they are and keep their raw kinds, so custody is unchanged. New outputs are
-  appended to evidence\sha256sums.txt.
+  files stay where they are and keep their raw kinds, so custody is unchanged. Running it again
+  replaces the earlier outputs (v0.6), and the ez/ and vol/ lines of evidence\sha256sums.txt are
+  rewritten to match.
 
   Tools that are missing, and artifacts that were not collected, are skipped with a warning.
 
@@ -40,9 +41,18 @@ $ErrorActionPreference = "Stop"
 $Ev = Join-Path $RunDir "evidence"
 $Ez = Join-Path $Ev "ez"
 $VolOut = Join-Path $Ev "vol"
-New-Item -ItemType Directory -Force -Path $Ez, (Join-Path $Ez "shellbags") | Out-Null
 $script:Warnings = @()
 function Warn([string]$msg) { $script:Warnings += $msg; Write-Warning $msg }
+# v0.6: a second run used to add a second, timestamped set of EZ outputs next to the first, so
+# every row was ingested twice (jt-v1b: 123 files). Each run now replaces the previous outputs.
+foreach ($d in @($Ez, $VolOut)) {
+  $old = @(Get-ChildItem -LiteralPath $d -Recurse -File -ErrorAction SilentlyContinue)
+  if ($old.Count) {
+    Write-Host "removing $($old.Count) output files of an earlier parse-artifacts run from $d"
+    Remove-Item -LiteralPath $d -Recurse -Force
+  }
+}
+New-Item -ItemType Directory -Force -Path $Ez, (Join-Path $Ez "shellbags") | Out-Null
 
 function Find-Tool([string]$name) {
   $hit = Get-ChildItem -Path $EzTools -Recurse -Filter "$name.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -155,14 +165,15 @@ if ($Vol -and $mem) {
 } elseif (-not $mem) { Warn "no memory image under evidence\memory, Volatility skipped" }
 else { Warn "no -Vol given, Volatility skipped" }
 
-# Hashes of the new outputs
+# Hashes of the outputs. v0.6: the ez/ and vol/ lines are rewritten on every run, so outputs
+# removed above (or deleted by hand) do not stay listed (cy-c1 kept 88 stale lines).
 $sums = Join-Path $Ev "sha256sums.txt"
 $prefix = (Resolve-Path $Ev).Path.TrimEnd("\") + "\"
 $new = @(Get-ChildItem -Path $Ez, $VolOut -Recurse -File -ErrorAction SilentlyContinue)
-$lines = $new | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.FullName.Substring($prefix.Length))" }
-$have = @(if (Test-Path $sums) { Get-Content $sums })
-$lines = @($lines | Where-Object { $have -notcontains $_ })   # re-running adds no duplicate lines
-if ($lines) { Add-Content -Path $sums -Value $lines -Encoding utf8 }
+$lines = @($new | ForEach-Object {
+  "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.FullName.Substring($prefix.Length).Replace('\', '/'))" })
+$keep = @(if (Test-Path $sums) { Get-Content $sums | Where-Object { $_ -and $_ -notmatch '^[0-9a-f]{64}\s+(ez|vol)[\\/]' } })
+[IO.File]::WriteAllLines($sums, [string[]]($keep + $lines), (New-Object Text.UTF8Encoding($false)))
 
 Write-Host ""
 Write-Host "$($new.Count) output files. Next: ptir add-run $RunDir"

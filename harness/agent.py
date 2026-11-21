@@ -170,7 +170,7 @@ def select_calls(calls: list[dict], serial: bool) -> tuple[list[dict], int]:
 
 def run(prompt: str, base_url: str, model: str, out: Path, max_steps: int = 10, timeout: int = 60,
         seed: int = 1234, scenario_id: str | None = None, temperature: float = 0.0,
-        serial: bool = True) -> str:
+        serial: bool = True, max_tokens: int = 1024, request_timeout: float = 300.0) -> str:
     import httpx
 
     sid = "s-" + uuid.uuid4().hex[:8]
@@ -178,21 +178,33 @@ def run(prompt: str, base_url: str, model: str, out: Path, max_steps: int = 10, 
     tr.emit("session_start", agent="ptir-harness", model=model, pid=os.getpid(), ppid=os.getppid(),
             image=sys.executable, host=platform.node(),
             user=os.environ.get("USERNAME") or os.environ.get("USER"), scenario_id=scenario_id,
-            temperature=temperature, seed=seed, serial_tools=serial)
+            temperature=temperature, seed=seed, serial_tools=serial, max_tokens=max_tokens)
     tr.emit("user_prompt", span_id="p1", text=prompt)
     messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
-    client = httpx.Client(base_url=base_url.rstrip("/"), timeout=600)
+    # v0.6: a reply is capped at max_tokens and a model call at request_timeout seconds, so a
+    # runaway reply (jt-v3, seed 2: nothing for 6+ minutes) ends the run in minutes, recorded.
+    client = httpx.Client(base_url=base_url.rstrip("/"), timeout=request_timeout)
     for step in range(1, max_steps + 1):
         mc = f"m{step}"
-        request = {"model": model, "messages": messages, "tools": TOOLS, "temperature": temperature, "seed": seed}
+        request = {"model": model, "messages": messages, "tools": TOOLS, "temperature": temperature, "seed": seed,
+                   "max_tokens": max_tokens}
         if serial:
             request["parallel_tool_calls"] = False
         tr.save_request(mc, request)
         tr.emit("model_call", model_call_id=mc, input_fragments=list(tr.fragments), request_ref=mc)
-        resp = client.post("/v1/chat/completions", json=request)
+        try:
+            resp = client.post("/v1/chat/completions", json=request)
+        except httpx.TimeoutException:
+            tr.emit("final_answer", model_call_id=mc, text=None, error=f"model call timed out after {request_timeout:g} s")
+            return ""
         resp.raise_for_status()
-        msg = resp.json()["choices"][0]["message"]
+        choice = resp.json()["choices"][0]
+        msg = choice["message"]
         calls, dropped = select_calls(msg.get("tool_calls") or [], serial)
+        if not calls and choice.get("finish_reason") == "length":
+            tr.emit("final_answer", model_call_id=mc, text=msg.get("content"),
+                    error=f"reply cut at max_tokens={max_tokens}")
+            return msg.get("content") or ""
         messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls or None})
         if not calls:
             tr.emit("final_answer", model_call_id=mc, text=msg.get("content"))
@@ -247,6 +259,10 @@ def main() -> int:
     ap.add_argument("--temperature", type=float, default=0.0,
                     help="sampling temperature (0 = the same answer every run)")
     ap.add_argument("--seed", type=int, default=1234, help="sampling seed; vary it with --temperature > 0")
+    ap.add_argument("--max-tokens", type=int, default=1024,
+                    help="cap on each reply's length (a runaway reply ends the run instead of stalling it)")
+    ap.add_argument("--request-timeout", type=float, default=300.0,
+                    help="seconds to wait for one model reply before ending the run")
     ap.add_argument("--parallel-tools", action="store_true",
                     help="run every tool call of a response (default: only the first, then ask again)")
     a = ap.parse_args()
@@ -260,7 +276,8 @@ def main() -> int:
     if not prompt:
         ap.error("give a prompt or --scenario")
     print(run(prompt, a.base_url, a.model, out, a.max_steps, seed=a.seed, scenario_id=scenario_id,
-              temperature=a.temperature, serial=not a.parallel_tools))
+              temperature=a.temperature, serial=not a.parallel_tools, max_tokens=a.max_tokens,
+              request_timeout=a.request_timeout))
     return 0
 
 
