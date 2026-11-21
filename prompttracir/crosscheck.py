@@ -10,6 +10,12 @@ can confirm or contradict what the trace says:
   untraced   shell processes the agent runtime started during the session that no tool call in
              the trace accounts for (a tool call deleted from the trace): CONTRADICTED
              "unexplained" edge from the session, and a finding
+
+v0.6: a runtime that wraps every tool execution (Claude Code's Bash wrapper, see shellwrap.py)
+is compared on the wrapped command, and its other shells (the start-up probes `bash -c env`,
+`bash -lc "echo $PATH"` and the shell-snapshot builder) are logged as runtime bookkeeping
+instead of untraced tool calls. A Bash call deleted from the transcript still runs inside the
+wrapper, so it is still caught.
   sockets    connections Volatility finds in memory for processes in the graph corroborate the
              network edges Sysmon recorded
 
@@ -21,11 +27,14 @@ from __future__ import annotations
 from .correlate import ProcessIndex, Session, ToolLink, basename, cmd_similarity
 from .graph import ProvGraph
 from .schema import Action, CanonicalEvent, Edge, EdgeStatus, Finding, NodeKind
+from .shellwrap import unwrap
 
 SHELL_IMAGES = {"cmd.exe", "powershell.exe", "pwsh.exe", "bash.exe", "sh.exe", "wsl.exe"}
 AGREE = 0.8          # command similarity at or above: the host confirms the transcript
 DISAGREE = 0.5       # below: the host contradicts it; in between: no verdict
 MEM_START_TOL_S = 2.0
+# runtimes that start every tool execution inside a recognisable wrapper (shellwrap.py)
+WRAPPING_RUNTIMES = {"claude-code"}
 
 
 def _trace_command(pg: ProvGraph, tc: str) -> str | None:
@@ -76,11 +85,12 @@ def cross_check(pg: ProvGraph, events: list[CanonicalEvent], pidx: ProcessIndex,
         if mem is not None:
             checks.append(("memory", mem.command_line, [mem.event_id]))
         for source, recorded, ev in checks:
-            sim = round(cmd_similarity(claimed, recorded), 3)
+            wrapped = unwrap(recorded)
+            sim = round(cmd_similarity(claimed, wrapped if wrapped is not None else recorded), 3)
             verdict = "agree" if sim >= AGREE else "contradict" if sim < DISAGREE else "unclear"
             log.append({"tool_call": tc, "process": f"process:{l.process_guid}", "source": source,
                         "trace_command": claimed, "recorded_command": recorded, "similarity": sim,
-                        "verdict": verdict})
+                        "verdict": verdict, **({"wrapped_command": wrapped} if wrapped is not None else {})})
             if verdict == "unclear":
                 continue
             pg.add_edge(Edge(src=tc, dst=f"process:{l.process_guid}", relation="transcript_check",
@@ -102,6 +112,7 @@ def cross_check(pg: ProvGraph, events: list[CanonicalEvent], pidx: ProcessIndex,
         if not s.runtime_guid or s.runtime_guid not in pidx.by_guid:
             continue
         lo, hi = s.host_span(margin=2.0)
+        wraps_tools = str(s.start.attrs.get("agent") or "").lower() in WRAPPING_RUNTIMES
         for child in pidx.children.get(s.runtime_guid, []):
             p = pidx.by_guid[child]
             if child in linked or basename(p.image) not in SHELL_IMAGES or not lo <= p.ts() <= hi:
@@ -109,6 +120,10 @@ def cross_check(pg: ProvGraph, events: list[CanonicalEvent], pidx: ProcessIndex,
             pid_ = f"process:{child}"
             sid = f"session:{s.session_id}"
             if pid_ not in pg.g or sid not in pg.g:
+                continue
+            if wraps_tools and unwrap(p.command_line) is None:
+                log.append({"session": sid, "process": pid_, "source": "process_create",
+                            "recorded_command": p.command_line, "verdict": "runtime_bookkeeping"})
                 continue
             pg.add_edge(Edge(src=sid, dst=pid_, relation="unexplained", status=X, confidence=1.0,
                              signals={"reason": "started by the agent runtime during the session, "

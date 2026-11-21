@@ -125,7 +125,8 @@ def parse(path: Path, evidence_id: str) -> Iterator[CanonicalEvent]:
                            "dst_host": d.get("DestinationHostname"), "protocol": d.get("Protocol"),
                            "initiated": str(d.get("Initiated", "true")).lower() == "true"})
             elif eid == 11:
-                yield CanonicalEvent(action=Action.FILE_CREATE, **proc, **common, object=d.get("TargetFilename"))
+                yield CanonicalEvent(action=Action.FILE_CREATE, **proc, **common, object=d.get("TargetFilename"),
+                                     attrs={"creation_time": d.get("CreationUtcTime")})
             elif eid in (23, 26):
                 yield CanonicalEvent(action=Action.FILE_DELETE, **proc, **common, object=d.get("TargetFilename"),
                                      attrs={"archived": eid == 23})

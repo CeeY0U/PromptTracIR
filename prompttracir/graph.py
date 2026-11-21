@@ -12,6 +12,7 @@ from typing import Iterable
 import networkx as nx
 
 from .correlate import ProcessIndex, Session, ToolLink, basename
+from .shellwrap import unwrap
 from .schema import (Action, Attribution, AttributionLabel, CanonicalEvent, Edge, EdgeStatus,
                      EventSource, Node, NodeKind)
 
@@ -205,6 +206,8 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
         pg.add_node(Node(id=f"process:{guid}", kind=NodeKind.PROCESS,
                          label=f"{basename(p.image)} ({p.pid})",
                          attrs={"image": p.image, "pid": p.pid, "command_line": p.command_line,
+                                # v0.6: the tool's own command when the runtime wrapped it
+                                "wrapped_command": unwrap(p.command_line),
                                 "user": p.user, "ts": p.timestamp.isoformat(),
                                 "attribution": a.label.value if a else "agent_runtime",
                                 "attribution_signals": a.signals if a else [],
@@ -237,13 +240,19 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
     # host effects of processes in the graph
     zeek = [e for e in events if e.action == Action.CONN]
     effect_guid = _effect_guids(events, pidx)
+    overwrites = _overwrites(events, effect_guid)
     for e in events:
         g = effect_guid.get(e.event_id)
         if e.action not in HOST_EFFECTS or not g or g not in in_graph or not e.object:
             continue
         kind, rel = HOST_EFFECTS[e.action]
-        oid = _effect_node(pg, e, kind)
         status, sig, z = O, {}, None
+        if e.event_id in overwrites:
+            # v0.6: an existing file replaced in place (cmd's ">" logs Sysmon 26 then 11): "wrote"
+            if overwrites[e.event_id] is None:
+                continue                       # the delete half of the pair
+            rel, sig = "wrote", {"overwrite": overwrites[e.event_id]}
+        oid = _effect_node(pg, e, kind)
         if e.action == Action.NET_CONNECT:
             z = _match_conn(e, zeek)
             if z:
@@ -255,6 +264,11 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
             sig = {**sig, "joined_by": "pid_and_time", "via": e.attrs.get("via")}
         pg.add_edge(Edge(src=f"process:{g}", dst=oid, relation=rel, status=status,
                          signals=sig, evidence=[e.event_id] + ([z.event_id] if z else [])))
+
+    # v0.6: connections Zeek saw but Sysmon did not log (no event 3), joined to a process that
+    # resolved the address just before
+    runtimes = {s.runtime_guid for s in sessions.values() if s.runtime_guid}
+    _zeek_without_sysmon(pg, events, zeek, effect_guid, in_graph - runtimes)
 
     # in-process effects of non-exec tool calls (e.g. http_get/write_file inside python.exe).
     # Each effect goes to one call. A call's window runs from just before it starts to its
@@ -358,6 +372,92 @@ def in_process_windows(calls: list[CanonicalEvent], results: dict[str, Canonical
         hi = max(hi, lo)
         out[call.tool_call_id] = (lo, hi)
         prev_hi = hi
+    return out
+
+
+DNS_TO_CONN_S = 60.0
+
+
+def _zeek_without_sysmon(pg: ProvGraph, events: list[CanonicalEvent], zeek: list[CanonicalEvent],
+                         effect_guid: dict[str, str], candidates: set[str]) -> None:
+    """Zeek connections no Sysmon event 3 accounts for, joined to the process (in the graph, not
+    the agent runtime itself) whose DNS query (Sysmon 22) returned the destination address at
+    most DNS_TO_CONN_S before the connection. Sysmon sometimes logs the lookups of a process but
+    not its connection (TT's tt-05: curl's upload is in Zeek only). The edge is INFERRED: the
+    join rests on an address and timing, not on a record naming the process."""
+    if not zeek:
+        return
+    by_obj: dict[str, list[CanonicalEvent]] = {}
+    for z in zeek:
+        by_obj.setdefault(z.object or "", []).append(z)
+    seen = set()
+    for e in events:
+        if e.action == Action.NET_CONNECT and e.object:
+            m = _match_conn(e, by_obj.get(e.object, []))
+            if m:
+                seen.add(m.event_id)
+    lookups: dict[str, list[CanonicalEvent]] = {}
+    for e in events:
+        g = effect_guid.get(e.event_id)
+        if e.action == Action.DNS_QUERY and g in candidates and e.object:
+            for ip in set(_IP.findall(str(e.attrs.get("results") or ""))):
+                lookups.setdefault(ip, []).append(e)
+    for z in zeek:
+        ip = (z.attrs or {}).get("resp_h")
+        if z.event_id in seen or ip not in lookups:
+            continue
+        before = [q for q in lookups[ip] if -2.0 <= z.ts() - q.ts() <= DNS_TO_CONN_S]
+        if not before:
+            continue
+        q = max(before, key=lambda x: x.ts())
+        g = effect_guid[q.event_id]
+        nid = pg.add_node(Node(id=f"net:{z.object}", kind=NodeKind.NETWORK, label=z.object,
+                               attrs={"ip": ip, "port": z.attrs.get("resp_p"), "host": q.object},
+                               evidence=[z.event_id]))
+        pg.node(nid).attrs["orig_bytes"] = pg.node(nid).attrs.get("orig_bytes", 0) + (z.attrs.get("orig_bytes") or 0)
+        did = pg.add_node(Node(id=f"domain:{q.object.lower()}", kind=NodeKind.DOMAIN, label=q.object,
+                               evidence=[q.event_id]))
+        pg.add_edge(Edge(src=did, dst=nid, relation="resolved_to", status=EdgeStatus.OBSERVED, evidence=[q.event_id]))
+        pg.add_edge(Edge(src=f"process:{g}", dst=nid, relation="connected", status=EdgeStatus.INFERRED,
+                         confidence=0.6,
+                         signals={"joined_by": "dns_query_then_zeek", "dns_query": q.object,
+                                  "zeek_uid": z.attrs.get("uid"), "orig_bytes": z.attrs.get("orig_bytes"),
+                                  "resp_bytes": z.attrs.get("resp_bytes")},
+                         evidence=[q.event_id, z.event_id]))
+
+
+OVERWRITE_WINDOW_S = 1.0
+
+
+def _overwrites(events: list[CanonicalEvent], effect_guid: dict[str, str]) -> dict[str, str | None]:
+    """File creates that replace an existing file, as event_id -> how it was recognised; the
+    matching delete events map to None (they are folded into the write).
+
+    Overwriting a file with cmd's ">" makes Sysmon log event 26 (file delete detected) and
+    event 11 (file created) for the same process and path at the same instant; event 11 also
+    keeps the file's original CreationUtcTime, which is older than the event itself."""
+    from .parsers import parse_time
+    out: dict[str, str | None] = {}
+    deletes: dict[tuple[str, str], list[CanonicalEvent]] = {}
+    for e in events:
+        if e.action == Action.FILE_DELETE and e.object and effect_guid.get(e.event_id):
+            deletes.setdefault((effect_guid[e.event_id], e.object.lower()), []).append(e)
+    for e in events:
+        g = effect_guid.get(e.event_id)
+        if e.action != Action.FILE_CREATE or not e.object or not g:
+            continue
+        pair = next((d for d in deletes.get((g, e.object.lower()), [])
+                     if abs(d.ts() - e.ts()) <= OVERWRITE_WINDOW_S and d.event_id not in out), None)
+        if pair is not None:
+            out[e.event_id], out[pair.event_id] = "delete_and_create", None
+            continue
+        created = (e.attrs or {}).get("creation_time")
+        try:
+            older = created and parse_time(created).timestamp() < e.ts() - OVERWRITE_WINDOW_S
+        except (TypeError, ValueError):
+            older = False
+        if older:
+            out[e.event_id] = "earlier_creation_time"
     return out
 
 

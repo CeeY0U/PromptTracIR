@@ -14,6 +14,7 @@ from datetime import datetime
 
 from .graph import ProvGraph
 from .schema import EdgeStatus, Finding, NodeKind
+from .shellwrap import is_wrapper_state
 
 DEFAULT_SENSITIVE = [r"secret", r"\.ssh", r"credential", r"password", r"login data", r"\.env\b",
                      r"id_rsa", r"\.kdbx", r"wallet", r"cookies", r"token"]
@@ -140,6 +141,9 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
             # ignore the runtime's own bookkeeping files that are not tied to a tool call
             if pg.node(e.src).kind == NodeKind.PROCESS and owning_tool_call(pg, e.src) is None:
                 continue
+            # v0.6: files a tool wrapper writes around every call (Claude Code's cwd record)
+            if is_wrapper_state(path, written=True):
+                continue
             s = is_sensitive(path, sens)
             # in-process effects that the trace never claimed are timing-only links; flag them only if
             # sensitive, and never for the runtime's own state (a sign-in token refresh is not a tool's effect)
@@ -155,13 +159,15 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
     for nid in actors:
         n = pg.node(nid)
         args = n.attrs.get("args")
-        cmd = n.attrs.get("command_line") or (args.get("command") if isinstance(args, dict) else None)
+        # v0.6: inside a runtime's wrapper only the tool's own command counts (shellwrap.py)
+        cmd = n.attrs.get("wrapped_command") or n.attrs.get("command_line") \
+            or (args.get("command") if isinstance(args, dict) else None)
         own_image = (n.attrs.get("image") or "").lower()
         for raw in command_paths(cmd):
             path = normalize_path(raw)
             if len(path) <= 3 or path.lower() == normalize_path(own_image).lower() \
-                    or path.lower().endswith((".exe", ".dll")):
-                continue   # program paths and bare drive roots are not data access
+                    or path.lower().endswith((".exe", ".dll")) or is_wrapper_state(path):
+                continue   # program paths, bare drive roots and wrapper state are not data access
             if not _under(path, allowed_paths):
                 s = is_sensitive(path, sens)
                 add("out_of_scope_file", "high" if s else "medium",
@@ -197,10 +203,41 @@ def run_rules(pg: ProvGraph, envelope: dict) -> list[Finding]:
             add("external_egress", "high", f"{pg.node(e.src).label} contacted {host or ip}",
                 [e.src, e.dst], e.evidence, destination=host or ip, status=e.status.value)
 
+    _mark_temp_downloads(pg, findings, allowed_domains | model_domains)
     out = sorted(findings.values(), key=lambda f: _tc_time(pg, f.attrs.get("tool_call")))
     for i, f in enumerate(out, 1):
         f.finding_id = f"F{i:03d}"
     return out
+
+
+TEMP_DIR = re.compile(r"\\appdata\\local\\temp\\", re.I)
+
+
+def _mark_temp_downloads(pg: ProvGraph, findings: dict, allowed: set[str]) -> None:
+    """v0.6: a tool call that only fetched from allowed sources may save what it fetched in the
+    user's temporary folder (Claude Code downloads a page with curl and reads it back). Those
+    files are kept as "temp_download" findings of severity "info", tied to the call as context
+    only: they are not a deviation, so they do not start the attack chain or count as a flagged
+    call. A call that also contacted anything else keeps its findings, as does a sensitive file."""
+    egress = {f.attrs.get("tool_call") for f in findings.values() if f.kind == "external_egress"}
+    for f in findings.values():
+        tc = f.attrs.get("tool_call")
+        if (f.kind != "out_of_scope_file" or not tc or tc in egress or f.attrs.get("sensitive")
+                or f.attrs.get("relation") not in ("created", "wrote")
+                or not TEMP_DIR.search(f.attrs.get("path") or "")):
+            continue
+        procs = {n for n in pg.forward(tc) if pg.node(n).kind == NodeKind.PROCESS} | {tc}
+        hosts = []
+        for e in pg.edges():
+            if e.src in procs and e.relation in ("connected", "resolved") \
+                    and pg.node(e.dst).kind in (NodeKind.NETWORK, NodeKind.DOMAIN):
+                d = pg.node(e.dst)
+                hosts.append({(d.attrs.get("host") or "").lower(), (d.attrs.get("ip") or "").lower(),
+                              d.label.lower() if d.kind == NodeKind.DOMAIN else ""} - {"", "-"})
+        if hosts and all(h & allowed for h in hosts):
+            f.kind, f.severity = "temp_download", "info"
+            f.summary += " (fetched from an allowed source into the temporary folder: task scratch)"
+            f.attrs["context_tool_call"], f.attrs["tool_call"] = tc, None
 
 
 def _tc_time(pg: ProvGraph, tc: str | None) -> str:

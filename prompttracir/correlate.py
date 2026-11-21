@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
 from . import config as config_mod
+from .shellwrap import effective_command, unwrap
 from .schema import (Action, Attribution, AttributionLabel, CanonicalEvent, EdgeStatus,
                      EventSource)
 
@@ -272,7 +273,8 @@ def _identify_runtime(s: Session, events, results, pidx: ProcessIndex, cfg: dict
         matched = []
         for call in calls:
             lo, hi = _call_window(call, results.get(call.tool_call_id), s.clock_offset, cfg["link"])
-            if any(lo <= d.ts() <= hi and cmd_similarity(call.command_line, d.command_line) >= 0.8 for d in desc):
+            if any(lo <= d.ts() <= hi and cmd_similarity(call.command_line, effective_command(d.command_line)) >= 0.8
+                   for d in desc):
                 matched.append(call.tool_call_id)
         if matched:
             sig["tool_calls_matched_by_children"] = matched
@@ -331,9 +333,12 @@ def link_tool_calls(events: list[CanonicalEvent], pidx: ProcessIndex,
                     score += 0.1
                 if sess and sess.runtime_method == "inferred":
                     sig["runtime_inferred"] = True
-            sim = cmd_similarity(call.command_line, p.command_line)
+            wrapped = unwrap(p.command_line)
+            sim = cmd_similarity(call.command_line, wrapped or p.command_line)
             if sim:
                 sig["command_similarity"] = round(sim, 3)
+            if wrapped is not None:
+                sig["compared_wrapped_command"] = True     # v0.6: Claude Code's Bash wrapper
             sb_sim, sb_ev = 0.0, None
             for b in blocks.get(p.pid, []):
                 if p.ts() - 1.0 <= b.ts() <= hi + 5.0:
