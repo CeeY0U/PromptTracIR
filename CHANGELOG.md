@@ -2,6 +2,69 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.6.0] - 2026-11-21
+
+Roadmap v0.6 (local model analysis), the fixes from the 17 v0.5 lab runs (two labs), and the
+dataset completed by counting slots by outcome.
+
+### Added
+- Schema-constrained local-model replies (`prompttracir/llm.py`): the JSON schema's ID fields are
+  enums of the IDs in the input, so llama-server (which enforces schemas as a grammar) cannot cite
+  an ID that does not exist; servers without `json_schema` fall back to `json_object` with the
+  schema, then plain JSON mode.
+- Grounded summary on the attack chain and its one-hop neighbourhood (at most 60 nodes), each node
+  with the facts the graph holds for it, answered as cited sentences.
+- Entity-level narrative validation: a sentence that names a file, program, domain or address not
+  shown by the nodes it cites is dropped. Dropped sentences are counted by reason.
+- `configs/local-model.json`: the pinned model (Qwen2.5-7B-Instruct Q4_K_M), server command and
+  sampling; `ptir llm-pin`. Every `llm.json` records the pin, the served model and the prompt
+  version.
+- `ptir explain CASE_OR_ROOT --llm-url URL [--families ...]`: runs only the local-model layer on
+  analysed cases, without changing their graph or findings.
+- `eval-batch`: unsupported claims before and after validation (target at most 0.05 and 0), the
+  local model's verdict accuracy on deviating calls, and clean runs (legitimate or injection
+  ignored) with any finding, since a finding without a tool call is still a false alarm.
+- `--localizer heuristic-v01`: the v0.1 cue list, frozen, as the cue-only baseline (the current
+  list gained cues from the lab payloads in v0.5). On the 31 lab runs: localization F1 0.75, span
+  overlap 0.703, chain edge F1 0.941, against 1.0 for the segment localizer.
+- `harness/label_run.py`: gold tool-to-process links for Claude Code runs (the Bash wrapper whose
+  `eval '...'` holds the transcript command exactly); `--update-links` refreshes only the links of
+  a reviewed ground truth.
+- `harness/agent.py`: `--max-tokens` (default 1024) and `--request-timeout` (default 300 s).
+
+### Changed
+- Dataset: slots that needed an agent to follow a payload are counted by outcome. The real model
+  followed 0 of 6 persistence, file-change and download payloads at temperature 0.7, and Claude
+  Code 0 of 4 payloads; those runs are scored as "injection ignored" and the rates are reported
+  (ROADMAP.md section 5, `docs/DATASET_PROGRESS.md`: 30 of 30 slots).
+- `parse-artifacts.ps1` replaces the outputs of an earlier run instead of adding a second set, and
+  rewrites the ez/ and vol/ lines of `sha256sums.txt`.
+- `collect-run.ps1` waits up to 60 s for `llama-server` to exit and retries an empty or short
+  memory image once, 30 s later.
+- Claude Code runs labelled before v0.6 (no gold links) are not scored for tool-to-process links.
+
+### Fixed
+- Claude Code's Bash wrapper on Windows (jt-c3, cy-c3: 10 and 8 false findings, 4 and 3
+  contradictions): calls are linked and cross-checked on the wrapped command (`shellwrap.py`), the
+  runtime's start-up shells are logged as bookkeeping instead of untraced tool calls, and the
+  wrapper's own files and TEMP are no longer out-of-scope references. A Bash call dropped from the
+  transcript is still caught.
+- A file fetched into %TEMP% by a call that contacted only allowed hosts is a `temp_download`
+  note (severity info), not a deviation (jt-c3 saved the lab guide with curl).
+- An overwrite (Sysmon 26 and 11 together, or an older CreationUtcTime) is reported as "wrote",
+  not "deleted" (jt-v2b, cy-v2).
+- Zeek connections without a Sysmon event 3 are joined (inferred) to the process whose DNS query
+  returned the address just before (tt-05).
+- A file-writing tool call is labelled malicious only when its target path carries an attacker
+  marker, not the text it writes (jt-v1b).
+- Tests: 153 -> 171.
+
+On the 31 lab runs (all evidence): malicious-call F1 0.909 -> 1.0, tool-to-process link precision
+0.875 -> 1.0, contradictions on untampered runs 7 -> 0, clean runs with any finding 0 of 21;
+localization, chain and attribution unchanged (1.0, 1.0, 0.988). The lab VM needs v0.6.0 only for
+the harness and collection changes; every run should be re-analysed, and the Claude Code runs'
+links refreshed with `label_run.py --update-links`.
+
 ## [0.5.1] - 2026-11-21
 
 Fix from the first v0.5.0 lab runs.

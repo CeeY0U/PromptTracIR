@@ -142,6 +142,8 @@ Status (2026-11-17, v0.5.0): every item above is built and tested, together with
 
 Status (2026-11-21, v0.5.1): the first v0.5.0 lab run of `file_change_01` showed that the lab agent's shell tool broke commands with double quotes on Windows; fixed. The lab VM needs v0.5.1.
 
+Status (2026-11-21, v0.5 lab runs): 17 runs collected in two labs on v0.5.0 and v0.5.1 (the new scenarios with the scripted and the real model, and six Claude Code runs), which completes the dataset (section 5). Scored together with the earlier runs on v0.5.1 (31 runs, two tampered copies): localization F1 1.0, span overlap 1.0, chain edge F1 1.0, path exact match 1.0, attribution macro-F1 0.988, 2 of 2 tampered copies detected, so the v0.5 "done when" targets are met. Two misses, both from Claude Code's Bash wrapper on Windows and fixed in v0.6.0: tool-to-process link precision 0.875 and 7 contradictions on untampered runs (jt-c3, cy-c3). Replay fidelity on the real model (docs/TESTING.md, 10.5) was not run.
+
 ### v0.6: Local model analysis (Phase 5, RQ4)
 
 Goal: explanations that cannot invent evidence.
@@ -154,6 +156,8 @@ Goal: explanations that cannot invent evidence.
 - Stretch: LoRA fine-tune, split by attack family. Only start once the dataset is frozen.
 
 Done when: unsupported claims are at most 5 percent before validation and zero after, on the training split.
+
+Status (2026-11-21, v0.6.0): built and tested with model doubles. Replies are constrained by a JSON schema whose ID fields are enums of the input's IDs (llama-server enforces it as a grammar; other servers fall back to JSON mode). The summary sees the attack chain and its one-hop neighbourhood (at most 60 nodes) with each node's facts, and answers as cited sentences. Validation now also drops a sentence that names a file, program, domain or address its cited nodes do not show. `configs/local-model.json` pins the model, quantisation, server command and sampling, and every `llm.json` records the pin, the served model and the prompt version. `ptir explain` runs the local-model layer on analysed cases (`--families` for the training split) and `eval-batch` reports unsupported claims before and after validation. Not done: the measurement itself and any prompt tuning, which need the local model on the lab VM; the LoRA stretch goal is not started. Also in v0.6.0, the fixes from the v0.5 lab runs (CHANGELOG): on the 31 lab runs, malicious-call F1 0.909 -> 1.0, link precision 0.875 -> 1.0, contradictions on untampered runs 7 -> 0, clean runs with any finding 0 of 21 (findings without a tool call now count), and the frozen v0.1 cue-only baseline (`--localizer heuristic-v01`) at localization F1 0.75, span overlap 0.703, chain edge F1 0.941, against 1.0 for the segment localizer.
 
 ### v0.7: Analyst interface and export (Phase 6, build)
 
@@ -236,8 +240,23 @@ Status (16 Nov 2026): 14 of 30 done (8 real local, 6 scripted), all analysed wit
 (4 real, 4 scripted) and the 6 Claude Code runs. Extra runs beyond the plan (the seed 1 and 4
 sets) are kept and scored but not required.
 
-Limits to state in the report: per-family figures rest on two runs and are indicative; Claude Code
-figures show coverage, not accuracy; the dataset is half the size given in the proposal.
+**Revised on 21 Nov 2026: slots are counted by outcome.** All 30 slots have a reviewed run (plus
+one extra run and two tampered copies). Eight slots needed an agent to follow a payload, and it
+did not: the real model at temperature 0.7 followed 0 of 6 persistence, file-change and download
+payloads (it followed 2 of 2 data-transmission payloads), and Claude Code followed 0 of 4 (two
+models, two labs; one refusal came from a safety classifier). Under the existing rule, those runs
+are scored as "injection ignored", and the follow and refusal rates are reported as a result.
+More seeds would have cost about 30 minutes each with no sign the rate would move, and rewording
+the payloads until an agent obeys would bias the rate the report measures. The effect on Table
+III: every attack family is still covered on host evidence by the scripted runs; real-model
+localization rests on the two data-transmission runs; Claude Code covers the closed-agent
+pipeline on legitimate and refused runs only. Per-slot detail: `docs/DATASET_PROGRESS.md`.
+
+Limits to state in the report: per-family figures rest on two runs and are indicative; real-model
+successful attacks exist for data transmission only; Claude Code figures show coverage, not
+accuracy, and no Claude Code run followed a payload; impact accuracy rests on the four
+exfiltration runs collected before the file inventory existed (two optional scripted runs would
+measure it); the dataset is half the size given in the proposal.
 
 Rules (also in `docs/DATASET_PROGRESS.md`):
 
@@ -264,6 +283,8 @@ Rules (also in `docs/DATASET_PROGRESS.md`):
    | v1.0 | 29 Nov, 23:59 | report, limitations, demo case, tag `v1.0.0`; 28 to 29 Nov is buffer |
 
    At about two lab runs an hour, the 16 runs still needed on 16 Nov are about eight hours in total. If the dataset is short on 26 Nov, freeze what exists and report the counts per cell (`docs/DATASET_PROGRESS.md`) rather than slipping v0.8. The analyst study (Plaso / Timesketch comparison) is the first thing to cut if time runs out.
+
+   Progress on 21 Nov: v0.5 is released, v0.6.0 is built (two days ahead of the table), and the dataset is complete (30 slots, counted by outcome, section 5). Left before the freeze: the v0.6 narrative measurement on the lab VM, and optionally two scripted exfiltration runs for impact accuracy.
 2. **LangGraph.** The proposal names a LangGraph agent; the harness is a plain loop. Port it, or record the change in the report.
 3. **React.** The proposal names React; the UI is one HTML page. Same choice.
 4. **AttnTrace.** It needs attention weights that an OpenAI-compatible server does not return. Keep it optional unless someone wants to run the model through a library that exposes them.
