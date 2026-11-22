@@ -74,7 +74,7 @@ def test_schema_ids_are_enums_and_invented_entities_are_dropped(tmp_path, sample
     assert s["unsupported_rate_before_validation"] == 0.5 and s["unsupported_rate_after_validation"] == 0.0
     assert s["unsupported_by_reason"] == {"bad_or_missing_citation": 0, "entity_not_in_cited_nodes": 1,
                                           "relation_not_in_graph": 1}
-    assert rec["run"]["prompt_version"] == "v0.7.0" and rec["run"]["pin"]["model"]["quantisation"] == "Q4_K_M"
+    assert rec["run"]["prompt_version"] == "v0.7.1" and rec["run"]["pin"]["model"]["quantisation"] == "Q4_K_M"
     assert c.read_output("llm.json")["summary"]["kept"] == 2
     assert len(c.read_output("llm.json")["summary"]["raw_sentences"]) == 4
     # the graph and findings on disk are not touched by explain

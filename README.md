@@ -13,7 +13,7 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.7.0 (21 Nov 2026). The pipeline runs on real lab evidence (Windows 11 24H2 VM,
+> Status: v0.7.1 (22 Nov 2026). The pipeline runs on real lab evidence (Windows 11 24H2 VM,
 > Nov 2026). v0.4 added the attribution engine, v0.5 causal reconstruction, v0.6 a checkable
 > local-model layer (schema-constrained replies, entity-checked summaries, a pinned model,
 > `ptir explain`). v0.7 adds the analyst views (attack flow, timeline, evidence, raw records),
@@ -22,7 +22,8 @@ contradicted, unknown) and links back to the exact raw record it came from.
 > localization F1 1.0, chain edge F1 1.0, link precision 1.0, attribution macro-F1 0.99, two of
 > two tampered traces detected, no finding on any of the 21 runs without an attack. Local-model
 > summaries: 1 of 75 sentences unsupported with the v0.6 checks, 16 of 75 once wrong relations
-> count (v0.7 check), 0 after validation. Submission deadline: 29 Nov 2026, 23:59. See
+> count (v0.7 check), 0 after validation; the v0.7 prompt brings the training split to 0.113 (v0.7.1
+> fixes under measurement). Submission deadline: 29 Nov 2026, 23:59. See
 > [ROADMAP.md](ROADMAP.md), [docs/TESTING.md](docs/TESTING.md), dataset progress in
 > [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) (30 of 30 slots, 33 scored runs) and
 > [What is not built yet](#what-is-not-built-yet).
@@ -50,7 +51,10 @@ docker compose --profile llm up -d model
 CASE=./cases/demo docker compose run --rm ui ptir explain /case --llm-url http://model:8080
 ```
 
-The case folder is mounted read-write at `/case` (verifying hashes adds custody entries). Ports
+`CASE` must be the folder that holds `case.json` (for a lab run, `runs/<run>/case`); Docker
+creates a missing folder empty, and the UI then exits with "no case at /case". A case made on
+Windows works as it is. The case folder is mounted read-write at `/case` (verifying hashes adds
+custody entries). Ports
 bind to 127.0.0.1 only: the UI has no login. `MODELS`, `MODEL_FILE`, `LLM_THREADS`, `PTIR_PORT`
 and `LLM_PORT` override the defaults in `docker-compose.yml`.
 
@@ -251,7 +255,10 @@ or address it names appears in the cited nodes, and (3) since v0.7, its claims m
 a sentence about the injection's origin must cite the entry-point fragment or its source, a
 "first deviation" claim must cite the first deviating call, an effect it cites must be reachable
 from the tool call or process it cites, and its verb must be something that actor can do (a
-`read_file` call does not upload; a process cannot "create" a file it has no edge to).
+`read_file` call does not upload; a process cannot "create" a file it has no edge to). Since
+v0.7.1 a denied action ("did not write") fails only if the graph shows it. The summary's context
+leaves out what the agent runtime does for itself (traffic to `model_api_domains`, the harness's
+source copies), marked `agent_internal` in the graph.
 
 ## Lab setup (Windows 11 VM)
 
@@ -309,9 +316,9 @@ Mapped to the proposal so the team can split it up:
 | Provenance graph, backward/forward traversal | done | |
 | Scope rules, first deviation, exfil impact | done | |
 | Leave-one-out replay traceback | done | the real model followed the injection in 2 of 2 runs at temperature 0.7; replay fidelity is recorded per call (`baseline_survival`) |
-| Local LLM classification + validated summary | done (v0.6), relation check (v0.7) | schema-constrained, entity- and relation-checked, pinned model; measured on the VM with the v0.6 prompt (ROADMAP v0.6 status); the v0.7 prompt still has to be measured |
+| Local LLM classification + validated summary | done (v0.6), relation check (v0.7) | schema-constrained, entity- and relation-checked, pinned model; measured on the VM with the v0.6 and v0.7 prompts (ROADMAP v0.6 and v0.7 status); the v0.7.1 prompt still has to be measured |
 | Analyst UI | done (v0.7) | single page + Cytoscape: attack flow, graphs, timeline, evidence, raw records; decided to keep it instead of React (ROADMAP section 6) |
-| Docker Compose | done (v0.7) | `ui` and the pinned llama.cpp server (`--profile llm`); not yet run on a lab machine |
+| Docker Compose | done (v0.7) | `ui` and the pinned llama.cpp server (`--profile llm`); `ui` checked on Kali with a lab case, the model service not yet |
 | MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3), checked on real output (v0.3.1) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; `$MFT`/`$J` only with KAPE |
 | Zeek DNS / HTTP, Security 4663 file reads | done (v0.3) | 4663 needs `tools/audit-canary.ps1` on the VM |
 | Volatility 3 cross-check of the transcript | done (v0.5) | `crosscheck.py` compares the trace with Sysmon / 4688 and memory; processes from a finished run are usually gone from memory, so Sysmon carries most checks |

@@ -2,6 +2,32 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.7.1] - 2026-11-22
+
+From the v0.7 narrative measurement on the lab VM (training split 0.113, target 0.05): fixes for
+the causes found by reading the dropped sentences, all from the training families.
+
+### Fixed
+- The agent runtime's own activity inside a tool call's time window is no longer credited to the
+  call: connections to the envelope's `model_api_domains` (the local model server, or
+  api.anthropic.com for Claude Code) and the harness's copies of fetched sources
+  (`<run>\sources\<sha256>` and its folder). The nodes stay in the graph with
+  `attrs.agent_internal` (`model_api`, `harness_record`), keep their runtime-process edges, and
+  are left out of the local-model summary's context. Attack flow and STIX no longer show them as
+  tool-call effects. Test 7 metrics on the 33 lab runs are unchanged.
+- Relationship check: a clause after "not", "no", "never", "without" and similar is a denial; a
+  denied action fails only if the graph shows the cited tool call or its processes did it, and an
+  effect cited in a denial need not be reachable (cy-05: "The process did not write or read any
+  files" was dropped in v0.7).
+
+### Changed
+- Summary prompt v0.7.1: the rules are numbered and marked as not to be restated, IDs go only in
+  "cites", a call with no spawned process "spawned nothing", and summaries describe what happened
+  rather than what did not (jt-03 and the tampered copy repeated the v0.7 rule wording).
+- Docs: ROADMAP v0.7 status (Docker check, v0.7 prompt measurement, v0.7.1), README (Docker
+  `CASE` must hold `case.json`; validation rules).
+- Tests: 187 -> 190.
+
 ## [0.7.0] - 2026-11-21
 
 Roadmap v0.7 (analyst interface and export), and a relationship check for local-model summaries

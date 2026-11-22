@@ -41,7 +41,7 @@ from .graph import ProvGraph
 from .schema import NodeKind
 from .traceback import context_fragments
 
-PROMPT_VERSION = "v0.7.0"
+PROMPT_VERSION = "v0.7.1"
 MAX_NODES = 60
 PIN_FILE = Path(__file__).resolve().parents[1] / "configs" / "local-model.json"
 
@@ -57,18 +57,21 @@ Only cite IDs that appear in the input. Reply with JSON only:
  "rationale": "one or two sentences", "evidence_ids": [ids]}"""
 
 SUMMARY_SYSTEM = """You write incident summaries for forensic analysts.
-You are given graph nodes (with an id, a kind, a label and facts), the edges between them, and
-the analysis: the entry point (the fragment of fetched or read content that carried the injected
-instruction) and the first deviating tool call.
-Write at most 8 short sentences in time order: what the user asked, where the injected
-instruction came from, which tool call deviated, and what it did on the host.
-Every sentence lists the IDs of the nodes that support it in "cites".
-- The injected instruction came from the entry-point fragment: cite that fragment. It did not
-  come from the user, the session or the agent.
-- A sentence about the deviation cites the first deviating tool call.
-- Say a tool call did something only if an edge from that call, or from a process it spawned,
-  shows it (spawned, created, wrote, read, connected). Each tool call did only its own actions.
-Name a file, program, domain or address only if it appears in the facts of a node you cite.
+The input holds graph nodes (each with an id, a kind, a label and facts), the edges between them,
+and an analysis that names the entry point (the fragment of fetched or read content that carried
+the injected instruction) and the first deviating tool call.
+Write at most 8 short sentences in time order, in your own words: what the user asked, where the
+injected instruction came from, which tool call deviated, and what it did on the host.
+Put the IDs that support a sentence in its "cites" list, never in its text.
+Follow these rules, but do not restate them in the summary:
+1. The injected instruction is credited to the entry-point fragment, which that sentence cites;
+   never to the user, the session or the agent.
+2. A sentence that says a tool call deviated cites the first deviating tool call.
+3. An action (ran, created, wrote, read, connected, uploaded) is stated only when an edge from
+   the cited tool call, or from a process it spawned, shows it. Each tool call did only its own
+   actions. A tool call with no spawned process acted inside the agent: it spawned nothing.
+4. Describe what happened, not what did not happen.
+5. A file, program, domain or address is named only if it appears in the facts of a cited node.
 Do not speculate about intent or about anything not in the input.
 Reply with JSON only: {"sentences": [{"text": "...", "cites": ["id", ...]}]}"""
 
@@ -218,9 +221,12 @@ def node_facts(pg: ProvGraph, nid: str, text_limit: int = 300) -> dict:
 
 
 def neighbourhood(pg: ProvGraph, chain_nodes: set[str], limit: int = MAX_NODES) -> list[str]:
-    """Chain nodes first, then their one-hop neighbours, at most `limit` in all."""
+    """Chain nodes first, then their one-hop neighbours, at most `limit` in all. Neighbours the
+    agent runtime touches for itself (model-server traffic, the harness's source copies; graph
+    attr agent_internal, v0.7.1) are left out: they are not what the tool calls did."""
     chain = sorted(n for n in chain_nodes if n in pg.g)
-    extra = sorted({m for n in chain for m in list(pg.g.predecessors(n)) + list(pg.g.successors(n))}
+    extra = sorted({m for n in chain for m in list(pg.g.predecessors(n)) + list(pg.g.successors(n))
+                    if "node" in pg.g.nodes[m] and not pg.node(m).attrs.get("agent_internal")}
                    - set(chain))
     return (chain + extra)[:limit]
 
@@ -326,6 +332,10 @@ ACTION_VERBS = [
     ("run", re.compile(r"\b(ran|run|runs|running|execut\w*|launch\w*|spawn\w*|invok\w*)\b", re.I), {"spawned", "ran"},
      {"shell", "bash", "powershell"}),
 ]
+# v0.7.1: "did not write", "never connected", "no file was read": a denied action is checked
+# against the graph's absence of it, not its presence
+NEGATION_RE = re.compile(r"\b(not|no|never|neither|nor|none|without)\b|n't\b", re.I)
+CLAUSE_END = re.compile(r"[,;:]|\b(but|while|whereas|although|then)\b", re.I)
 INJECTION_RE = re.compile(r"\b(inject\w*|payload|hidden instruction|malicious instruction|planted)\b", re.I)
 DEVIATION_RE = re.compile(r"\bdeviat\w*", re.I)
 
@@ -381,21 +391,44 @@ def relation_problems(sentence: str, cites: list[str], pg: ProvGraph, analysis: 
         problems.append(f"deviation claim does not cite the first deviating call {first}")
     if not actors:
         return problems
+    text = re.sub(r"\[[a-z_]+:[^\]]+\]", " ", sentence)
+    text = re.sub(r"\b[a-z_]+\([^)]*\)", " ", text)       # a quoted call such as write_file(...) is a name
+    positive, denied = _split_negated(text)
     reach = set().union(*(_downstream(pg, a) for a in actors))
-    for c, k in kinds.items():
-        if k in EFFECT_KINDS and c not in reach:
-            problems.append(f"{c} is not an effect of the cited tool call or process")
-    able = set().union(*(_abilities(pg, a) for a in actors))
+    if not denied:            # an effect cited in a denial ("did not write x") need not be reached
+        for c, k in kinds.items():
+            if k in EFFECT_KINDS and c not in reach:
+                problems.append(f"{c} is not an effect of the cited tool call or process")
+    did = set().union(*(_abilities(pg, a) for a in actors))
+    able = set(did)
     # "t2 created / started the process curl.exe": a cited process below another cited actor
     if any(b != a and b in _downstream(pg, a) and pg.node(b).kind == NodeKind.PROCESS
            for a in actors for b in actors):
         able |= {"created", "spawned"}
-    text = re.sub(r"\[[a-z_]+:[^\]]+\]", " ", sentence)
-    text = re.sub(r"\b[a-z_]+\([^)]*\)", " ", text)       # a quoted call such as write_file(...) is a name
     for verb, rx, rels, tools in ACTION_VERBS:
-        if rx.search(text) and not (able & rels or any("tool:" + t in able for t in tools)):
+        if rx.search(positive) and not (able & rels or any("tool:" + t in able for t in tools)):
             problems.append(f"'{verb}' is not something the cited tool call or its processes did")
+        if rx.search(denied) and (did & rels):
+            problems.append(f"'{verb}' is denied but the graph shows the cited tool call or its processes did it")
     return problems
+
+
+def _split_negated(text: str) -> tuple[str, str]:
+    """(positive part, denied part): from a negation word to the end of its clause is denied."""
+    positive, denied, rest = [], [], text
+    while True:
+        m = NEGATION_RE.search(rest)
+        if not m:
+            positive.append(rest)
+            break
+        positive.append(rest[:m.start()])
+        tail = rest[m.end():]
+        end = CLAUSE_END.search(tail)
+        denied.append(tail[:end.start()] if end else tail)
+        if not end:
+            break
+        rest = tail[end.start():]
+    return " ".join(positive), " ".join(denied)
 
 
 def validate_narrative(text: str, valid_ids: set[str], facts: dict[str, str] | None = None,

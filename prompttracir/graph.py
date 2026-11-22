@@ -110,8 +110,10 @@ class ProvGraph:
 
 
 def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict[str, Session],
-                links: list[ToolLink], attributions: list[Attribution]) -> ProvGraph:
+                links: list[ToolLink], attributions: list[Attribution],
+                envelope: dict | None = None) -> ProvGraph:
     pg = ProvGraph()
+    internal = _agent_internal(events, envelope)
     attr_by_guid = {a.process_guid: a for a in attributions}
     O, C, I = EdgeStatus.OBSERVED, EdgeStatus.CORROBORATED, EdgeStatus.INFERRED
 
@@ -286,6 +288,8 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
         for e in host_fx:
             if effect_guid[e.event_id] != s.runtime_guid or not e.object:
                 continue
+            if _internal_kind(e, internal):
+                continue       # v0.7.1: the agent's own model traffic and trace records, not the call's
             t = e.ts()
             cands = [tc for tc, (lo, hi) in windows.items() if lo <= t <= hi]
             if not cands:
@@ -352,10 +356,56 @@ def build_graph(events: list[CanonicalEvent], pidx: ProcessIndex, sessions: dict
 
     # an edge to a node the evidence never defines leaves a bare placeholder: drop it
     pg.g.remove_nodes_from([n for n, d in pg.g.nodes(data=True) if "node" not in d])
+    # v0.7.1: mark the agent's own model-server endpoints and the harness's records (kept as
+    # evidence of the runtime, left out of the local-model summary's context)
+    for n in pg.nodes():
+        kind = _node_internal_kind(n, internal)
+        if kind:
+            n.attrs["agent_internal"] = kind
     return pg
 
 
 # ---------------- helpers ----------------
+
+def _agent_internal(events: list[CanonicalEvent], envelope: dict | None) -> dict:
+    """What the agent runtime does for itself rather than for a tool call (v0.7.1): traffic to the
+    model API (the envelope's model_api_domains) and the harness's copies of fetched sources
+    (files named by a source's SHA-256, and the folder that holds them)."""
+    hosts = {str(d).lower() for d in (envelope or {}).get("model_api_domains", []) if d}
+    shas = set()
+    for e in events:
+        if e.action == Action.CONTEXT_FRAGMENT:
+            src = e.attrs.get("source") or {}
+            shas |= {str(src.get(k)).lower() for k in ("sha256", "raw_sha256", "text_sha256") if src.get(k)}
+    paths = set()
+    for e in events:
+        if e.action in HOST_EFFECTS and e.action != Action.NET_CONNECT and e.object:
+            p = e.object.replace("/", "\\").lower().rstrip("\\")
+            if p.rsplit("\\", 1)[-1] in shas:
+                paths |= {p, p.rsplit("\\", 1)[0]}
+    return {"hosts": hosts, "paths": paths}
+
+
+def _internal_kind(e: CanonicalEvent, internal: dict) -> str | None:
+    if e.action == Action.NET_CONNECT:
+        cands = {str(x).lower() for x in (e.attrs.get("dst_ip"), e.attrs.get("dst_host")) if x}
+        cands.add(str(e.object).lower().rsplit(":", 1)[0])
+        return "model_api" if cands & internal["hosts"] else None
+    if e.object and e.object.replace("/", "\\").lower().rstrip("\\") in internal["paths"]:
+        return "harness_record"
+    return None
+
+
+def _node_internal_kind(n, internal: dict) -> str | None:
+    if n.kind == NodeKind.NETWORK:
+        cands = {str(x).lower() for x in (n.attrs.get("ip"), n.attrs.get("host")) if x}
+        cands.add(n.id.split(":", 1)[-1].rsplit(":", 1)[0].lower())
+        return "model_api" if cands & internal["hosts"] else None
+    if n.kind == NodeKind.FILE:
+        p = str(n.attrs.get("path") or n.id.split(":", 1)[-1]).replace("/", "\\").lower().rstrip("\\")
+        return "harness_record" if p in internal["paths"] else None
+    return None
+
 
 def in_process_windows(calls: list[CanonicalEvent], results: dict[str, CanonicalEvent],
                        offset: float, margin: float = 0.5) -> dict[str, tuple[float, float]]:
