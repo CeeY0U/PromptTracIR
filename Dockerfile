@@ -1,7 +1,7 @@
 # PromptTracIR analyst UI and CLI.
 #
-#   docker build -t prompttracir:0.7.0 .
-#   docker run --rm -p 127.0.0.1:8000:8000 -v "$PWD/cases/demo:/case" prompttracir:0.7.0
+#   docker build -t prompttracir:0.7.1 .
+#   docker run --rm -p 127.0.0.1:8000:8000 -v "$PWD/cases/demo:/case" prompttracir:0.7.1
 #
 # Or use docker-compose.yml, which also starts the pinned local model (profile "llm").
 # The case is mounted read-write: `ptir verify` and the UI's "Verify hashes" add chain-of-custody

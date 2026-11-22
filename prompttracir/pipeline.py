@@ -85,9 +85,9 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
     sessions = find_sessions(events, pidx, cfg)
     links = link_tool_calls(events, pidx, sessions, cfg)
     attributions = attribute_processes(events, pidx, sessions, links, cfg)
-    pg = build_graph(events, pidx, sessions, links, attributions)
-
     envelope = case.meta.get("envelope", {})
+    pg = build_graph(events, pidx, sessions, links, attributions, envelope)
+
     findings = run_rules(pg, envelope)
     cc_log, cc_findings = cross_check(pg, events, pidx, sessions, links)
     findings = findings + cc_findings
