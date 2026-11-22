@@ -36,6 +36,13 @@ attribution engine uses, at its built-in default. A test fails if it drifts from
    Report those numbers with the file's fingerprint (`config.json` in each output folder, and
    `condition.config_fingerprints` in `results.json`). Do not tune again after looking at them.
 
+# Frozen settings (v0.8)
+
+No tuned attribution file was committed: the v0.8 results use the built-in defaults (fingerprint
+`84d416be6878`, as in `attribution-defaults.json`). `frozen-runs.json` (`ptir freeze runs`) records
+that fingerprint, the summary prompt version, the pinned local model and the localizer, together
+with the hash of every frozen run; `ptir experiments` stops if any of them changes.
+
 # Local model (v0.6)
 
 `local-model.json` pins the model the lab agent's real runs and PromptTracIR's local-model

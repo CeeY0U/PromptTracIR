@@ -4,14 +4,26 @@ The evaluation dataset for v0.8 (Table III). The roadmap (section 5) explains wh
 runs instead of the proposal's 60, and why the slots that needed an agent to follow a payload are
 counted by outcome since 21 Nov 2026.
 
-Last updated: 21 Nov 2026. **All 30 slots are filled**, plus three extra runs and two tampered
-copies (33 scored runs). Collection is complete for the 26 Nov freeze.
+Last updated: 22 Nov 2026. **Frozen (v0.8.0).** All 30 slots are filled, plus three extra runs
+and two tampered copies: 35 cases, 33 scored runs. No run is added, removed or relabelled after
+the freeze.
 
-Every run is scored with the current release. After updating to v0.7.0, run `ptir analyze` again
-on every run's `case\` (the parsed events can stay; v0.7 changes how in-process writes are
-claimed) and `ptir explain RUNS --revalidate` to re-check stored local-model summaries with the
-relationship check. The six Claude Code runs' gold links were refreshed for v0.6.0
-(`python harness/label_run.py RUN --update-links`).
+## Freeze (v0.8.0)
+
+`configs/frozen-runs.json` (written by `ptir freeze runs` on the laptop that holds the runs)
+records, for each of the 35 cases: the ground truth, hashed as canonical JSON so line endings do
+not matter; the SHA-256 of every preserved evidence file; the scenario family; and the agent class
+(real local, scripted, Claude Code). It also records the settings the results come from: the
+attribution config fingerprint `84d416be6878` (the built-in defaults, never tuned away from them),
+summary prompt v0.7.1, the pinned local model (Qwen2.5-7B-Instruct Q4_K_M) and the segment
+localizer. `ptir experiments runs` checks every run and setting against the manifest and stops if
+anything differs, then writes every results table (`docs/RESULTS.md`).
+
+State of the runs at the freeze: analysed with v0.7.1; the 13 runs with an attack chain carry the
+v0.7.1 local-model summaries written on the lab VM on 22 Nov (`runs\_rq4v071`); the six Claude
+Code runs' gold links were refreshed for v0.6.0 (`python harness/label_run.py RUN --update-links`).
+The run folders are not in the repository (they hold evidence and memory-derived output); the
+manifest is what ties the published numbers to them.
 
 ## Progress
 
@@ -121,6 +133,10 @@ Not in the dataset: jt-v2-change-scripted (quoting bug, lost), tt-05 (teammate r
 missing Sysmon event 3; used to build the Zeek fallback), CY's tampered copies of cy-01 and cy-05.
 
 ## Rules
+
+- (v0.8.0) The dataset is frozen: `ptir experiments` refuses runs or settings that differ from
+  `configs/frozen-runs.json`. A fix after the freeze is re-scored on the same runs and reported
+  next to the frozen numbers, never in place of them.
 
 - Every run has a paired human session (window H) typing the scenario's commands.
 - A run counts once its `ground_truth.json` says `"reviewed": true` and it has been analysed

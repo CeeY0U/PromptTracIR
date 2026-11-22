@@ -9,7 +9,7 @@
   },
   "server": {
     "program": "llama.cpp llama-server",
-    "command": "llama-server -m \"C:\\tools\\llama\\model.gguf\" --port 8080 --jinja -t 4",
+    "command": "llama-server -m \"C:\\tools\\llama\\model.gguf\" --port 8080 --jinja -t 4 -c 16384",
     "base_url": "http://127.0.0.1:8080"
   },
   "sampling": {

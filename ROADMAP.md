@@ -182,7 +182,16 @@ Status (2026-11-21, v0.7.0): built and tested.
 
 Status (2026-11-22, v0.7 checked): the "done when" is met. On Kali, `docker compose build ui` built the image, `docker compose up` served a demo case built inside the container and the jt-i1 lab case copied from the Windows laptop (attack flow, raw records, all 576 preserved files verified), and the jt-i1 STIX bundle passed the validator. Re-scoring the 33 runs on v0.7.0 left every Test 7 metric unchanged. The v0.7 prompt on the lab VM (same model and settings, 13 runs): unsupported before validation 0.091 over all scored runs (7 of 77) and 0.113 on the training split (6 of 53), 0 after; about 0.042 on the test families (1 of 24); verdicts 13 of 13. So the v0.7 prompt halves the v0.6 rate under the same checks (0.229 on training) but still misses 5 percent. Reading the 8 dropped sentences: 3 were about what the agent runtime does for itself (its traffic to the model server, the harness's copies of fetched pages), which the time-window join had credited to the running tool call; 2 repeated the prompt's rule wording; 1 was a true denial ("the process did not write or read any files") dropped for the verbs it denied; 2 were wrong relations. Three summaries had only two sentences, so the report gives sentences per summary next to the rate.
 
-Status (2026-11-22, v0.7.1): fixes for the first three causes, each taken from the training families only. In-process effects of the agent runtime no longer go to a tool call when they are traffic to the envelope's `model_api_domains` or the harness's source copies (files named by a fetched source's SHA-256, and their folder); those nodes stay in the graph, marked `agent_internal`, and are left out of the summary's context. The relationship check reads "did not / never / no" clauses as denials and checks them against the absence of the action. The summary rules are reworded so they read as rules, not sentences to copy (prompt v0.7.1). Test 7 metrics on the 33 runs (all evidence and without Sysmon) are unchanged, and the attack flow and STIX bundle no longer show the model-server connection. Checked against the v0.7.1 graph, the v0.7 summaries score 0.226 on training (12 of 53): most of their kept sentences about the model traffic and source copies were true of the v0.7 graph and are not of the corrected one. Not done: the v0.7.1 prompt measurement on the VM.
+Status (2026-11-22, v0.7.1): fixes for the first three causes, each taken from the training families only. In-process effects of the agent runtime no longer go to a tool call when they are traffic to the envelope's `model_api_domains` or the harness's source copies (files named by a fetched source's SHA-256, and their folder); those nodes stay in the graph, marked `agent_internal`, and are left out of the summary's context. The relationship check reads "did not / never / no" clauses as denials and checks them against the absence of the action. The summary rules are reworded so they read as rules, not sentences to copy (prompt v0.7.1). Test 7 metrics on the 33 runs (all evidence and without Sysmon) are unchanged, and the attack flow and STIX bundle no longer show the model-server connection. Checked against the v0.7.1 graph, the v0.7 summaries score 0.226 on training (12 of 53): most of their kept sentences about the model traffic and source copies were true of the v0.7 graph and are not of the corrected one.
+
+Status (2026-11-22, v0.7.1 measured): on the lab VM with the same model and settings, the v0.7.1 prompt gives 0.062 unsupported before validation over all scored runs (5 of 81 sentences, 12 summaries) and 0.091 on the training split (5 of 55), 0 on the test families (0 of 26), 0 after validation everywhere, and 12 of 12 correct call verdicts. Summaries are longer (no two-sentence summaries left). None of the five drops comes from the three causes v0.7.1 fixed: two are true claims about cy-01's upload that the graph cannot show (that run has no Sysmon network event for curl, only its DNS lookup), two cite incompletely (jt-01 cites the connection but not curl.exe; cy-03 runs two sentences together and cites cmd.exe for schtasks.exe), and one is a wrong relation (jt-i2: "the command spawned a process to write notes", for an in-process write). The prompt is frozen here for v0.8: another round tuned on eight training summaries would fit those summaries rather than the method, and the checker is not loosened to pass the cy-01 sentences.
+
+| Prompt, checks | All scored runs | Training split | Test families | After validation |
+|---|---|---|---|---|
+| v0.6 prompt, v0.6 checks (IDs, entities) | 0.015 (1 of 68) | 0.021 (1 of 48) | 0 of 20 | 0 |
+| v0.6 prompt, v0.7 checks (+ relations) | 0.221 (15 of 68) | 0.229 (11 of 48) | n/a | 0 |
+| v0.7 prompt, v0.7 checks | 0.091 (7 of 77) | 0.113 (6 of 53) | 0.042 (1 of 24) | 0 |
+| v0.7.1 prompt, v0.7.1 checks | 0.062 (5 of 81) | 0.091 (5 of 55) | 0 of 26 | 0 |
 
 ### v0.8: Evaluation release (Phase 6, experiments)
 
@@ -196,6 +205,14 @@ Goal: produce Table III.
 
 Done when: every row of Table III has a measured value, including the ones that miss their target.
 
+Status (2026-11-22, v0.8.0): built and measured on copies of the 35 lab cases; the laptop run is the result of record (`docs/RESULTS.md`, regenerated by `ptir experiments`).
+- Freeze: `ptir freeze runs` writes `configs/frozen-runs.json` (per run: ground truth hashed as canonical JSON, every evidence SHA-256, family, agent class; and the settings: attribution config `84d416be6878`, prompt v0.7.1, the pinned model, the segment localizer). `ptir experiments` refuses to run if a run or a setting differs from it. Weights were never tuned away from the defaults, so the defaults are what is frozen.
+- One script: `ptir experiments runs` scores the full analysis, re-analyses every run once per baseline and ablation into `output/<tag>/`, and writes `RESULTS.md` (dataset, Table III by split and agent class, baselines, ablations, narrative), `experiments.json` and per-condition `results.json` / `per_run.csv`. `RESULTS.md` has no dates or paths, so a re-run must give the same file. About 10 to 20 minutes on the laptop.
+- Baselines: trace only (agent-side records; stands in for AgentDFIR, which reads the same records and was not run itself), endpoint only (no agent trace), timestamp only (`--ablate timestamp_links`: links to the nearest process in the call window, attribution by session time), and the cue-only localizers (v0.1 and current cues).
+- Ablations: without PID capture (`--ablate pids`), without context identifiers (`--ablate context_ids`, rebuilt from time order), without memory, without network evidence (Zeek, PCAP), without Sysmon, without the local model.
+- Results on the 33 scored runs: every Table III target with a measured value is met except narrative grounding before validation (0.091 on the training split against 0.05; 0 after validation). Analyst utility is not measured (decision 5, section 6), so that row stays empty and the "done when" is met for the other six rows only.
+- What the baselines and ablations show: trace only reconstructs the trace side (localization 1.0) but links no process, attributes nothing and gets chain edge F1 0.706 with no exact path; endpoint only finds no attack at all (attribution macro-F1 0.241); timestamp only links 0.895 of tool calls correctly, mislabels processes (attribution 0.952), flags 2 of 21 clean runs, misses one tampered trace and reports 4 contradictions on untampered runs. Without PID capture link recall falls to 0.158, attribution to 0.859, chain edge F1 to 0.706 and impact accuracy to 0, and neither tampered copy is detected. Without Sysmon: attribution 0.876, chain edge 0.9, impact 0. Without network evidence impact accuracy falls to 0 (nothing can be confirmed) while everything else holds. Without memory nothing changes on these runs. Without context identifiers nothing changes because no trace event changes: every agent in the dataset ran one call at a time with its full history in context, so the identifiers are recoverable from time order. The local model adds only the narrative and call verdicts.
+
 ### v1.0: Final
 
 - Fix what the evaluation exposed, without tuning on the test split.
@@ -206,15 +223,15 @@ Done when: every row of Table III has a measured value, including the ones that 
 
 ## 4. Proposal targets and where each is first measured
 
-| Target (Table III) | Criterion | First measured | Reported |
-|---|---|---|---|
-| Tool-to-process correlation | Precision at least 0.95 with ProcessGuid or child PID | v0.4 | v0.8 |
-| Human-agent attribution | Macro-F1 at least 0.85 on complete evidence | v0.4 | v0.8 |
-| Injected-span localization | F1 at least 0.80 on successful injections | v0.5 | v0.8 |
-| Attack-chain reconstruction | Edge F1 at least 0.85 on complete evidence | v0.5 | v0.8 |
-| Impact assessment | No connection-only case labelled confirmed | v0.2 (already checked per case) | v0.8 |
-| Narrative grounding | At most 5 percent unsupported before validation, zero after | v0.6 | v0.8 |
-| Analyst utility | Faster than the Plaso / Timesketch baseline | v0.8 | v0.8 |
+| Target (Table III) | Criterion | First measured | Reported | v0.8 result (33 runs) |
+|---|---|---|---|---|
+| Tool-to-process correlation | Precision at least 0.95 with ProcessGuid or child PID | v0.4 | v0.8 | 1.0, met |
+| Human-agent attribution | Macro-F1 at least 0.85 on complete evidence | v0.4 | v0.8 | 0.99, met |
+| Injected-span localization | F1 at least 0.80 on successful injections | v0.5 | v0.8 | 1.0 (real local model 1.0 on 2 runs), met |
+| Attack-chain reconstruction | Edge F1 at least 0.85 on complete evidence | v0.5 | v0.8 | 1.0, met |
+| Impact assessment | No connection-only case labelled confirmed | v0.2 (already checked per case) | v0.8 | 0, met (per-destination accuracy 0.333) |
+| Narrative grounding | At most 5 percent unsupported before validation, zero after | v0.6 | v0.8 | 0.091 on training (missed), 0 after (met) |
+| Analyst utility | Faster than the Plaso / Timesketch baseline | v0.8 | v0.8 | not measured (study cut) |
 
 ## 5. Dataset track (runs alongside v0.2 onward)
 
@@ -281,6 +298,10 @@ overlap, malicious calls, link precision, first deviation, chain edge, node and 
 attribution 0.99, 0 of 21 clean runs with a finding, 2 of 2 tampered copies contradicted, no
 connection-only case labelled confirmed); impact accuracy is 0.333 for the reason above.
 
+**Frozen on 22 Nov 2026 (v0.8.0)**, four days before the planned 26 Nov freeze: 35 cases (33
+scored runs and two tampered copies), recorded in `configs/frozen-runs.json` with every evidence
+hash and the settings the results come from. Per-slot detail and the freeze: `docs/DATASET_PROGRESS.md`.
+
 Rules (also in `docs/DATASET_PROGRESS.md`):
 
 - Every run has a paired human session typing the same commands.
@@ -310,7 +331,9 @@ Rules (also in `docs/DATASET_PROGRESS.md`):
    Progress on 21 Nov: v0.5 is released, v0.6.0 is built (two days ahead of the table), and the dataset is complete (30 slots, counted by outcome, section 5). Left before the freeze: the v0.6 narrative measurement on the lab VM, and optionally two scripted exfiltration runs for impact accuracy.
 
    Progress later on 21 Nov: v0.6.0 is released and measured (RQ4, v0.6 status), the two scripted exfiltration runs are in (jt-i1, jt-i2), and v0.7.0 is built four days ahead of the table. Left before the freeze: the v0.7 prompt measurement on the VM and the Docker check.
-2. **LangGraph.** The proposal names a LangGraph agent; the harness is a plain loop. Port it, or record the change in the report.
+
+   Progress on 22 Nov: v0.7.0 and v0.7.1 are released and checked (Docker on Kali, two VM narrative runs), and v0.8.0 is built five days ahead of the table: the dataset and settings are frozen and every results table comes from `ptir experiments`. Left: v1.0 (report, limitations, demo case, dataset packaging).
+2. **LangGraph.** The proposal names a LangGraph agent; the harness is a plain loop. Recorded on 22 Nov (v0.8.0): keep the plain loop. Every lab run was collected with it and the dataset is frozen; a port would change the agent under test after the fact. The loop records what the evaluation needs (tool calls, context fragments, model calls, child PIDs), and Claude Code covers a second, production agent. Record the change in the report.
 3. **React.** The proposal names React; the UI is one HTML page. Decided on 21 Nov (v0.7.0): keep the single page. It needs no build step or Node toolchain, ships inside the Python package and the Docker image, works offline with the vendored Cytoscape, and every view the proposal describes (attack flow, timeline, evidence, raw records, export) is in it. A React port would add a second toolchain four days before the freeze without adding a view. Record the change in the report.
 4. **AttnTrace.** It needs attention weights that an OpenAI-compatible server does not return. Keep it optional unless someone wants to run the model through a library that exposes them.
-5. **Ethics clearance** for the analyst study has lead time. Ask about it now, not at v0.8.
+5. **Ethics clearance** for the analyst study has lead time. Ask about it now, not at v0.8. Recorded on 22 Nov (v0.8.0): the analyst study is cut, as planned in decision 1 (the first thing to cut). No clearance was obtained and there is no time to run a fair comparison with Plaso / Timesketch before 29 Nov, so the Analyst utility row of Table III is reported as not measured, with the UI's attack flow and raw-record views described instead.

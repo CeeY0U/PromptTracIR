@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+from . import ablation
 from . import config as config_mod
 from .case import Case
-from .correlate import ProcessIndex, attribute_processes, find_sessions, link_tool_calls
+from .correlate import ProcessIndex, attribute_by_time, attribute_processes, find_sessions, link_tool_calls
 from .crosscheck import cross_check
 from .graph import ProvGraph, build_graph
 from .impact import assess
@@ -69,22 +70,28 @@ def excluded_evidence(case: Case, without: list[str] | None) -> set[str]:
 
 def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int = 3,
             config: dict | None = None, without: list[str] | None = None, tag: str | None = None,
-            localizer: str = "auto") -> dict:
+            localizer: str = "auto", ablate: list[str] | None = None) -> dict:
     """Correlate and analyse a case.
 
     config   settings from prompttracir.config (default: the built-in defaults)
     without  evidence kinds to leave out (ablation); their events are ignored, not deleted
     tag      write outputs to output/<tag>/ instead of output/ (keeps the full analysis intact)
     localizer traceback method: auto, segment, heuristic, replay or group (see traceback.py)
+    ablate   v0.8: information removed inside the trace, or the timestamp baseline (ablation.py)
     """
     cfg = config if config is not None else config_mod.load()
     drop = excluded_evidence(case, without)
+    abl = ablation.check(ablate)
     out = case.view(tag) if tag else case
-    events = [e for e in case.load_events() if e.raw.evidence_id not in drop]
+    events = ablation.apply([e for e in case.load_events() if e.raw.evidence_id not in drop], abl)
     pidx = ProcessIndex.build(events, cfg)
     sessions = find_sessions(events, pidx, cfg)
-    links = link_tool_calls(events, pidx, sessions, cfg)
-    attributions = attribute_processes(events, pidx, sessions, links, cfg)
+    if "timestamp_links" in abl:
+        links = link_tool_calls(events, pidx, sessions, cfg, timestamp_only=True)
+        attributions = attribute_by_time(pidx, sessions, links, cfg)
+    else:
+        links = link_tool_calls(events, pidx, sessions, cfg)
+        attributions = attribute_processes(events, pidx, sessions, links, cfg)
     envelope = case.meta.get("envelope", {})
     pg = build_graph(events, pidx, sessions, links, attributions, envelope)
 
@@ -114,6 +121,7 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
     kinds = sorted({case.meta["evidence"][d]["kind"] for d in case.meta["evidence"]} -
                    {case.meta["evidence"][d]["kind"] for d in drop})
     out.write_output("config.json", {"fingerprint": fp, "without": sorted(without or []), "tag": tag,
+                                     "ablate": sorted(abl), "localizer": localizer,
                                      "evidence_kinds": kinds, "settings": cfg})
     out.write_output("correlation.json", {"sessions": [s.summary() for s in sessions.values()]})
     out.write_output("graph.json", pg.to_json())
@@ -134,7 +142,7 @@ def analyze(case: Case, replayer: Replayer | None = None, llm=None, samples: int
         keep |= set(pg.g.predecessors(n)) | set(pg.g.successors(n))
     out.write_output("graph_reduced.json", pg.subgraph_json(keep))
     case._custody("analyzed", {"findings": len(findings), "first_deviation": first, "config": fp,
-                               "without": sorted(without or []), "tag": tag})
+                               "without": sorted(without or []), "ablate": sorted(abl), "tag": tag})
     labels = {}
     for a in attributions:
         labels[a.label.value] = labels.get(a.label.value, 0) + 1

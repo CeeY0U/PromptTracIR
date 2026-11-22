@@ -13,19 +13,19 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.7.1 (22 Nov 2026). The pipeline runs on real lab evidence (Windows 11 24H2 VM,
-> Nov 2026). v0.4 added the attribution engine, v0.5 causal reconstruction, v0.6 a checkable
-> local-model layer (schema-constrained replies, entity-checked summaries, a pinned model,
-> `ptir explain`). v0.7 adds the analyst views (attack flow, timeline, evidence, raw records),
-> a STIX 2.1 export tagged with MITRE ATLAS and ATT&CK, Docker Compose, and a relationship check
-> that drops summary sentences whose claims do not match the graph. On the 33 lab runs (v0.6.0):
-> localization F1 1.0, chain edge F1 1.0, link precision 1.0, attribution macro-F1 0.99, two of
-> two tampered traces detected, no finding on any of the 21 runs without an attack. Local-model
-> summaries: 1 of 75 sentences unsupported with the v0.6 checks, 16 of 75 once wrong relations
-> count (v0.7 check), 0 after validation; the v0.7 prompt brings the training split to 0.113 (v0.7.1
-> fixes under measurement). Submission deadline: 29 Nov 2026, 23:59. See
-> [ROADMAP.md](ROADMAP.md), [docs/TESTING.md](docs/TESTING.md), dataset progress in
-> [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) (30 of 30 slots, 33 scored runs) and
+> Status: v0.8.0 (22 Nov 2026), the evaluation release. The pipeline runs on real lab evidence
+> (Windows 11 24H2 VM, Nov 2026). v0.4 added the attribution engine, v0.5 causal reconstruction,
+> v0.6 a checkable local-model layer, v0.7 the analyst views, STIX 2.1 export and Docker Compose.
+> v0.8 freezes the dataset (35 cases, 33 scored runs) and settings, and `ptir experiments`
+> regenerates every results table: [docs/RESULTS.md](docs/RESULTS.md). On the frozen runs:
+> tool-to-process link precision 1.0, attribution macro-F1 0.99, localization F1 1.0, chain edge
+> F1 1.0, no connection-only case labelled confirmed, two of two tampered traces detected, no
+> finding on any of the 21 runs without an attack. Local-model summaries: 0.091 unsupported
+> before validation on the training split (target 0.05, missed), 0 after. The analyst study was
+> cut. Baselines (trace only, endpoint only, timestamp only, cue-only localizers) and ablations
+> (PID capture, context identifiers, memory, network, Sysmon, local model) are in the same file.
+> Submission deadline: 29 Nov 2026, 23:59. See [ROADMAP.md](ROADMAP.md),
+> [docs/TESTING.md](docs/TESTING.md), [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) and
 > [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -101,6 +101,8 @@ agent, git attributed to the human, exfiltration to `collect.attacker-lab.test` 
 | `ptir explain CASE_OR_ROOT --llm-url URL` | (v0.6) Run only the local-model layer on analysed case(s): a verdict per deviating tool call and a grounded summary, into `llm.json`. `--families` picks the training split; `eval-batch` then reports unsupported claims before and after validation. `--timeout S` per model request (default 1800). |
 | `ptir explain CASE_OR_ROOT --revalidate` | (v0.7) Re-check the stored summaries with the current validation (IDs, entities and relations) without calling the model; the previous summary is kept in `llm.json` as `summary_before_revalidation`. |
 | `ptir llm-pin` | Print the pinned local model, quantisation, server command and sampling (`configs/local-model.json`). |
+| `ptir freeze ROOT [--out F]` | (v0.8) Record every run under `ROOT` (ground truth hash, evidence SHA-256s, family, agent class) and the settings that produce the results into `configs/frozen-runs.json`. |
+| `ptir experiments ROOT [--out D] [--freeze F] [--only K,...]` | (v0.8) Check the runs and settings against the freeze, then score the full system and every baseline and ablation and write `D/RESULTS.md` (default `ROOT/results-v0.8/`), `experiments.json` and one folder per condition. Stops on a difference from the freeze unless `--force`. |
 
 `analyze` options:
 
@@ -110,6 +112,30 @@ agent, git attributed to the human, exfiltration to `collect.attacker-lab.test` 
 * `--config FILE` attribution settings; only the keys you change (see `configs/README.md`).
 * `--without KIND` (repeatable) ignore that evidence kind, for ablations. Outputs go to
   `output/without-<kinds>/` (or `--tag NAME`), so the full analysis in `output/` is kept.
+* `--ablate pids|context_ids|timestamp_links` (v0.8, repeatable; also on `eval-batch`) remove
+  information inside the trace or switch to the timestamp baseline (`prompttracir/ablation.py`).
+  Outputs go to `output/ablate-<names>/`.
+
+### Experiments (v0.8)
+
+`ptir experiments runs` runs these conditions on the frozen runs, each re-analysed into its own
+`output/<tag>/` (the full analysis in `output/` is scored as it is, with its local-model summaries):
+
+| Condition | What changes |
+|---|---|
+| Full system | nothing |
+| Trace only | every host evidence kind left out: the agent's own records only (what AgentDFIR reads; AgentDFIR itself was not run) |
+| Endpoint only | the agent trace, requests and sources left out |
+| Timestamp only | each exec tool call linked to the process that started nearest to it in its window; a process is the agent's if it started inside an agent session (`--ablate timestamp_links`) |
+| Cue-only localizer (v0.1 cues / current cues) | `--localizer heuristic-v01` / `heuristic` |
+| Without PID capture | runtime and child PIDs and ProcessGuids removed from the trace (`--ablate pids`) |
+| Without context identifiers | fragment, model-call and tool-call identifiers removed from the trace and rebuilt from time order (`--ablate context_ids`) |
+| Without memory / network / Sysmon | `--without` Volatility kinds and the memory image / Zeek and PCAP / Sysmon |
+| Without the local model | the full system without narrative and verdicts (every other metric is already computed without the model) |
+
+Each condition is reported for all scored runs, the training families (legitimate, data
+transmission, persistence), the test families (file change, download) and per agent class (real
+local model, scripted model, Claude Code). Scripted runs measure the host side only.
 
 Both expect an OpenAI-compatible server, e.g. `llama-server -m model.gguf --port 8080 --jinja`
 (llama.cpp) or Ollama at `http://127.0.0.1:11434`.
@@ -308,7 +334,7 @@ Mapped to the proposal so the team can split it up:
 | Proposal item | Status | Notes |
 |---|---|---|
 | Case format, hashing, custody, canonical schema | done | |
-| Agent trace + harness with child-PID capture and request logging | done | plain loop; LangGraph optional; raw source bytes kept (v0.2) |
+| Agent trace + harness with child-PID capture and request logging | done | plain loop kept instead of LangGraph (ROADMAP section 6); raw source bytes kept (v0.2) |
 | Scenario schema, setup, labelling with ProcessGuid and sink window | done (v0.2) | 5 scenarios (v0.5 adds file change and download); dataset 30 of 30 slots, counted by outcome (`docs/DATASET_PROGRESS.md`) |
 | Lab collection script (logs, pcap, SRUM, Prefetch, Amcache, hives, LNK, memory, KAPE) | done (v0.2), run on the lab VM (v0.3.1) | exports logs from boot; copies hive transaction logs |
 | Sysmon / Security / PowerShell / PSReadLine / Zeek parsers | done | |
@@ -316,7 +342,7 @@ Mapped to the proposal so the team can split it up:
 | Provenance graph, backward/forward traversal | done | |
 | Scope rules, first deviation, exfil impact | done | |
 | Leave-one-out replay traceback | done | the real model followed the injection in 2 of 2 runs at temperature 0.7; replay fidelity is recorded per call (`baseline_survival`) |
-| Local LLM classification + validated summary | done (v0.6), relation check (v0.7) | schema-constrained, entity- and relation-checked, pinned model; measured on the VM with the v0.6 and v0.7 prompts (ROADMAP v0.6 and v0.7 status); the v0.7.1 prompt still has to be measured |
+| Local LLM classification + validated summary | done (v0.6), relation check (v0.7) | schema-constrained, entity- and relation-checked, pinned model; measured on the VM with the v0.6, v0.7 and v0.7.1 prompts; the v0.7.1 prompt is frozen (0.091 unsupported on training, target 0.05 missed; 0 after validation) |
 | Analyst UI | done (v0.7) | single page + Cytoscape: attack flow, graphs, timeline, evidence, raw records; decided to keep it instead of React (ROADMAP section 6) |
 | Docker Compose | done (v0.7) | `ui` and the pinned llama.cpp server (`--profile llm`); `ui` checked on Kali with a lab case, the model service not yet |
 | MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3), checked on real output (v0.3.1) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; `$MFT`/`$J` only with KAPE |
@@ -326,20 +352,25 @@ Mapped to the proposal so the team can split it up:
 | PromptLocate / TracLLM / AttnTrace modules | done (v0.5) except AttnTrace | segment (PromptLocate-style) and group search (TracLLM-style) localizers; AttnTrace needs attention weights an OpenAI-compatible server does not return |
 | STIX 2.1 export with ATLAS tags | done (v0.7) | `ptir export-stix`; all 35 lab cases pass the OASIS validator |
 | Multi-run evaluation | done (v0.2) | `ptir eval-batch` |
-| Ablations | done (v0.4) | `ptir analyze --without KIND`, `ptir eval-batch --without KIND` |
-| Baselines | **todo** | v0.8 |
+| Ablations | done (v0.4, v0.8) | `--without KIND` for evidence kinds; `--ablate pids` and `--ablate context_ids` inside the trace; all six proposal ablations in `ptir experiments` |
+| Baselines | done (v0.8) | trace only, endpoint only, timestamp only, cue-only localizers; AgentDFIR approximated by trace only (not run itself) |
+| Dataset freeze, results tables | done (v0.8) | `ptir freeze`, `ptir experiments`, [docs/RESULTS.md](docs/RESULTS.md) |
+| Analyst study (Plaso / Timesketch comparison) | **cut** | no ethics clearance or time before 29 Nov (ROADMAP section 6); Table III reports it as not measured |
 
 ## Repository layout
 
 ```
 prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceback, crosscheck, shellwrap, llm,
-                pipeline, runs (add-run), adfir (import), batch (eval-batch), config, views, stix, api, cli, web/
+                pipeline, runs (add-run), adfir (import), batch (eval-batch), config, views, stix, api, cli, web/,
+                ablation (in-trace ablations, timestamp baseline), experiments (freeze, results tables)
 harness/        agent.py (traced lab agent), scripted_model.py, scenario.py, exfil_sink.py, label_run.py,
                 tamper_trace.py (edited-transcript test copies), scenarios/
 tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, audit-canary.ps1,
                 sysmon-lab.xml
-configs/        attribution-defaults.json, local-model.json (pinned model and server), tuning procedure
-docs/           TESTING.md (automated tests, lab runs, acceptance checks), DATASET_PROGRESS.md, STIX_EXTENSION.md
+configs/        attribution-defaults.json, local-model.json (pinned model and server), tuning procedure,
+                frozen-runs.json (v0.8 dataset and settings freeze)
+docs/           TESTING.md (automated tests, lab runs, acceptance checks), DATASET_PROGRESS.md, STIX_EXTENSION.md,
+                RESULTS.md (v0.8, generated by `ptir experiments`)
 Dockerfile, docker-compose.yml   UI / CLI image and the pinned local model server (v0.7)
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests

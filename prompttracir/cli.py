@@ -29,6 +29,7 @@ from pathlib import Path
 from .case import Case
 
 LOCALIZERS = ["auto", "segment", "heuristic", "heuristic-v01", "replay", "group"]
+from .ablation import ABLATIONS  # noqa: E402
 
 
 CASE_COMMANDS = {"add", "import-adfir", "ingest", "analyze", "verify", "serve", "eval", "export-stix"}
@@ -76,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--config", help="attribution settings JSON (only the keys you change; see `ptir config`)")
     p.add_argument("--without", action="append", metavar="KIND", default=[],
                    help="leave this evidence kind out (ablation); repeat for several")
+    p.add_argument("--ablate", action="append", metavar="NAME", default=[], choices=sorted(ABLATIONS),
+                   help="v0.8: remove information inside the trace (pids, context_ids) or use the "
+                        "timestamp baseline (timestamp_links); repeat for several")
     p.add_argument("--tag", help="write outputs to output/TAG/ instead of output/")
 
     sub.add_parser("config", help="print the default attribution settings as JSON")
@@ -104,6 +108,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tag", help="output/TAG/ for the re-analysis (default: derived from --without)")
     p.add_argument("--localizer", choices=LOCALIZERS,
                    help="re-analyse with this traceback method (heuristic-v01: the v0.1 cue-only baseline)")
+    p.add_argument("--ablate", action="append", metavar="NAME", default=[], choices=sorted(ABLATIONS),
+                   help="v0.8: re-analyse with this ablation (pids, context_ids, timestamp_links)")
+
+    p = sub.add_parser("freeze", help="v0.8: record the runs, their evidence hashes and the settings (dataset freeze)")
+    p.add_argument("root", help="folder of runs: ROOT/<run>/ground_truth.json and ROOT/<run>/case/")
+    p.add_argument("--out", default="configs/frozen-runs.json", help="manifest to write (default %(default)s)")
+    p.add_argument("--case-name", default="case")
+
+    p = sub.add_parser("experiments", help="v0.8: Table III, baselines and ablations from the frozen runs")
+    p.add_argument("root", help="folder of runs (the frozen dataset)")
+    p.add_argument("--out", help="results folder (default: ROOT/results-v0.8)")
+    p.add_argument("--freeze", default="configs/frozen-runs.json",
+                   help="manifest from `ptir freeze` to check the runs and settings against (default %(default)s)")
+    p.add_argument("--force", action="store_true", help="run even if the runs or settings differ from the freeze")
+    p.add_argument("--only", help="comma-separated condition keys (full always runs), e.g. full,no-sysmon")
+    p.add_argument("--case-name", default="case")
 
     p = sub.add_parser("explain", help="local-model verdicts and grounded summary for analysed case(s)")
     p.add_argument("target", help="a case directory, or a folder of runs (ROOT/<run>/case)")
@@ -208,10 +228,10 @@ def main(argv: list[str] | None = None) -> int:
         from . import config as config_mod
         try:
             cfg = config_mod.load(a.config)
+            from .batch import condition_tag
             res = analyze(Case(a.case), replayer, llm, a.samples, config=cfg, without=a.without,
-                          tag=a.tag or (None if not a.without else
-                                        "without-" + "-".join(sorted(a.without)).replace("_", "")),
-                          localizer=a.localizer)
+                          tag=condition_tag(a.without, a.tag, None, a.ablate),
+                          localizer=a.localizer, ablate=a.ablate)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
@@ -265,6 +285,36 @@ def main(argv: list[str] | None = None) -> int:
         if sc_path.exists():
             payload = (json.loads(sc_path.read_text(encoding="utf-8-sig")).get("injection") or {}).get("payload")
         print(json.dumps(evaluate_case(Case(a.case), gt, payload=payload), indent=2))
+    elif a.cmd == "freeze":
+        from .experiments import freeze
+        manifest = freeze(a.root, a.case_name)
+        if not manifest["runs"]:
+            print(f"no runs under {a.root}", file=sys.stderr)
+            return 1
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.out).write_text(json.dumps(manifest, indent=2) + "\n")
+        n = len(manifest["runs"])
+        print(f"froze {n} runs ({sum(r['tampered'] for r in manifest['runs'])} tampered copies) "
+              f"and settings {manifest['settings']} into {a.out}")
+    elif a.cmd == "experiments":
+        from .experiments import check_freeze, run_experiments
+        fz = Path(a.freeze)
+        if fz.exists():
+            problems = check_freeze(a.root, json.loads(fz.read_text(encoding="utf-8-sig")), a.case_name)
+            if problems:
+                print(f"differences from {fz}:\n  " + "\n  ".join(problems), file=sys.stderr)
+                if not a.force:
+                    print("stopping (use --force to run anyway)", file=sys.stderr)
+                    return 2
+            else:
+                print(f"runs and settings match {fz}")
+        else:
+            print(f"no freeze manifest at {fz}: the runs are not checked (ptir freeze ROOT)", file=sys.stderr)
+        out = Path(a.out or Path(a.root) / "results-v0.8")
+        only = [x.strip() for x in a.only.split(",")] if a.only else None
+        run_experiments(a.root, out, a.case_name, only=only, progress=lambda m: print(m, flush=True))
+        print((out / "RESULTS.md").read_text())
+        print(f"wrote {out / 'RESULTS.md'}, {out / 'experiments.json'} and one folder per condition")
     elif a.cmd == "eval-batch":
         from .batch import evaluate_runs, find_runs, summary_lines, write_report
         runs = find_runs(a.root, a.case_name)
@@ -277,7 +327,8 @@ def main(argv: list[str] | None = None) -> int:
             cfg = config_mod.load(a.config) if a.config else None
             report = evaluate_runs(runs, a.case_name, a.reviewed_only, families=split(a.families),
                                    exclude_families=split(a.exclude_families), reanalyze=a.reanalyze,
-                                   config=cfg, without=a.without, tag=a.tag, localizer=a.localizer)
+                                   config=cfg, without=a.without, tag=a.tag, localizer=a.localizer,
+                                   ablate=a.ablate)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
