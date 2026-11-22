@@ -296,10 +296,13 @@ def _identify_runtime(s: Session, events, results, pidx: ProcessIndex, cfg: dict
 # ---------------- tool-call-to-process links ----------------
 def link_tool_calls(events: list[CanonicalEvent], pidx: ProcessIndex,
                     sessions: dict[str, Session], cfg: dict | None = None,
-                    min_score: float | None = None) -> list[ToolLink]:
-    """Link each execution tool call to the process it created."""
+                    min_score: float | None = None, timestamp_only: bool = False) -> list[ToolLink]:
+    """Link each execution tool call to the process it created. timestamp_only (v0.8 baseline):
+    the process that started nearest to the call inside its window, nothing else."""
     cfg = _cfg(cfg)
     link = cfg["link"]
+    if timestamp_only:
+        return _link_by_time(events, pidx, sessions, link)
     min_score = link["min_score"] if min_score is None else min_score
     results = {e.tool_call_id: e for e in events if e.action == Action.TOOL_RESULT}
     blocks: dict[int, list[CanonicalEvent]] = defaultdict(list)
@@ -360,6 +363,49 @@ def link_tool_calls(events: list[CanonicalEvent], pidx: ProcessIndex,
         if best:
             links.append(best)
     return links
+
+
+def _link_by_time(events, pidx: ProcessIndex, sessions: dict[str, Session], link: dict) -> list[ToolLink]:
+    results = {e.tool_call_id: e for e in events if e.action == Action.TOOL_RESULT}
+    runtimes = {s.runtime_guid for s in sessions.values() if s.runtime_guid}
+    links = []
+    for call in _exec_calls(events):
+        res = results.get(call.tool_call_id)
+        sess = sessions.get(call.session_id or "")
+        offset = sess.clock_offset if sess else float(link["assumed_clock_offset_s"])
+        lo, hi = _call_window(call, res, offset, link)
+        t0 = call.ts() + offset
+        cands = [(abs(p.ts() - t0), g, p) for g, p in pidx.by_guid.items()
+                 if lo <= p.ts() <= hi and g not in runtimes]
+        if not cands:
+            continue
+        _, g, p = min(cands, key=lambda c: (c[0], c[1]))
+        links.append(ToolLink(call.tool_call_id, g, 0.5, EdgeStatus.INFERRED, {"time_window": True},
+                              [call.event_id, p.event_id] + ([res.event_id] if res else [])))
+    return links
+
+
+def attribute_by_time(pidx: ProcessIndex, sessions: dict[str, Session], links: list[ToolLink],
+                      cfg: dict | None = None) -> list[Attribution]:
+    """v0.8 timestamp baseline: a process that started inside an agent session is the agent's,
+    any other one the human's. No ancestry, PIDs, command lines or human-side artifacts."""
+    cfg = _cfg(cfg)
+    spans = [s.host_span(cfg["human"]["session_margin_s"]) for s in sessions.values()]
+    runtimes = {s.runtime_guid for s in sessions.values() if s.runtime_guid}
+    linked = {l.process_guid: l.tool_call_id for l in links}
+    out = []
+    for guid, p in pidx.by_guid.items():
+        if guid in runtimes:
+            continue
+        inside = any(lo <= p.ts() <= hi for lo, hi in spans)
+        label = AttributionLabel.AGENT if inside else AttributionLabel.HUMAN
+        out.append(Attribution(process_guid=guid, pid=p.pid, image=p.image, label=label,
+                               agent_score=1.0 if inside else 0.0, human_score=0.0 if inside else 1.0,
+                               signals=["baseline: started inside an agent session" if inside
+                                        else "baseline: started outside every agent session"],
+                               tool_call_id=linked.get(guid), agent_probability=1.0 if inside else 0.0,
+                               seen_by=pidx.seen_by.get(guid, [])))
+    return out
 
 
 # ---------------- attribution ----------------

@@ -2,6 +2,38 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [0.8.0] - 2026-11-22
+
+Roadmap v0.8 (evaluation release): the dataset and settings are frozen and one command produces
+every results table.
+
+### Added
+- `ptir freeze ROOT` (`prompttracir/experiments.py`): writes `configs/frozen-runs.json` with, per
+  run, the ground truth hashed as canonical JSON, the SHA-256 of every evidence file, family,
+  scenario and agent class, plus the settings (attribution config fingerprint, summary prompt
+  version, pinned model, localizer).
+- `ptir experiments ROOT`: checks the runs and settings against the freeze (stops on a difference
+  unless `--force`), scores the full analysis and re-analyses every run for each baseline and
+  ablation, and writes `RESULTS.md` (dataset, Table III by split and agent class, baselines,
+  ablations, narrative), `experiments.json` and per-condition `results.json` / `per_run.csv`.
+  `RESULTS.md` holds no dates or paths, so a re-run on the frozen runs gives the same file.
+- Baselines: trace only, endpoint only, timestamp only, cue-only localizers (v0.1 and current).
+- In-trace ablations (`prompttracir/ablation.py`, `--ablate` on `analyze` and `eval-batch`):
+  `pids` (no runtime or child PIDs or ProcessGuids in the trace), `context_ids` (no fragment,
+  model-call or tool-call context identifiers; rebuilt from time order), and the timestamp
+  baseline `timestamp_links` (links to the nearest process in the call window, attribution by
+  session time; `correlate.attribute_by_time`). Events are copied, never changed in the case.
+- `docs/RESULTS.md`: the v0.8 tables.
+
+### Changed
+- `configs/local-model.json`: the pinned server command now includes `-c 16384`, as used for
+  every narrative run since v0.6.
+- `analyze` records the ablations and localizer in `output[/<tag>]/config.json` and custody.
+- Docs: ROADMAP (v0.7.1 measurement, v0.8 status, Table III results, LangGraph and analyst-study
+  decisions, freeze), DATASET_PROGRESS (frozen), README (freeze, experiments, conditions),
+  configs/README (frozen settings).
+- Version 0.8.0. Tests: 190 -> 197.
+
 ## [0.7.1] - 2026-11-22
 
 From the v0.7 narrative measurement on the lab VM (training split 0.113, target 0.05): fixes for
