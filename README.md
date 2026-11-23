@@ -13,19 +13,19 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v0.8.0 (22 Nov 2026), the evaluation release. The pipeline runs on real lab evidence
-> (Windows 11 24H2 VM, Nov 2026). v0.4 added the attribution engine, v0.5 causal reconstruction,
-> v0.6 a checkable local-model layer, v0.7 the analyst views, STIX 2.1 export and Docker Compose.
-> v0.8 freezes the dataset (35 cases, 33 scored runs) and settings, and `ptir experiments`
-> regenerates every results table: [docs/RESULTS.md](docs/RESULTS.md). On the frozen runs:
-> tool-to-process link precision 1.0, attribution macro-F1 0.99, localization F1 1.0, chain edge
-> F1 1.0, no connection-only case labelled confirmed, two of two tampered traces detected, no
-> finding on any of the 21 runs without an attack. Local-model summaries: 0.091 unsupported
-> before validation on the training split (target 0.05, missed), 0 after. The analyst study was
-> cut. Baselines (trace only, endpoint only, timestamp only, cue-only localizers) and ablations
-> (PID capture, context identifiers, memory, network, Sysmon, local model) are in the same file.
-> Submission deadline: 29 Nov 2026, 23:59. See [ROADMAP.md](ROADMAP.md),
-> [docs/TESTING.md](docs/TESTING.md), [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) and
+> Status: v1.0.0 (23 Nov 2026), the final release. The pipeline runs on real lab evidence
+> (Windows 11 24H2 VM, Nov 2026): attribution engine (v0.4), causal reconstruction (v0.5), a
+> checkable local-model layer (v0.6), analyst views, STIX 2.1 export and Docker Compose (v0.7), and
+> the evaluation release (v0.8): the dataset (35 cases, 33 scored runs) and settings are frozen and
+> `ptir experiments` regenerates every results table in [docs/RESULTS.md](docs/RESULTS.md). On the
+> frozen runs: tool-to-process link precision 1.0, attribution macro-F1 0.99, localization F1 1.0,
+> chain edge F1 1.0, no connection-only case labelled confirmed, two of two tampered traces
+> detected, no finding on any of the 21 runs without an attack. Local-model summaries: 0.091
+> unsupported before validation on the training split (target 0.05, missed), 0 after. The analyst
+> study was cut. v1.0 adds a calmer UI theme, `ptir package-dataset` and
+> [docs/LIMITATIONS.md](docs/LIMITATIONS.md). Submission deadline: 29 Nov 2026, 23:59. See
+> [ROADMAP.md](ROADMAP.md), [docs/TESTING.md](docs/TESTING.md),
+> [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) and
 > [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -54,11 +54,25 @@ CASE=./cases/demo docker compose run --rm ui ptir explain /case --llm-url http:/
 `CASE` must be the folder that holds `case.json` (for a lab run, `runs/<run>/case`); Docker
 creates a missing folder empty, and the UI then exits with "no case at /case". A case made on
 Windows works as it is. The case folder is mounted read-write at `/case` (verifying hashes adds
-custody entries). Ports
-bind to 127.0.0.1 only: the UI has no login. `MODELS`, `MODEL_FILE`, `LLM_THREADS`, `PTIR_PORT`
-and `LLM_PORT` override the defaults in `docker-compose.yml`.
+custody entries). Ports bind to 127.0.0.1 only: the UI has no login. `MODELS`, `MODEL_FILE`,
+`LLM_THREADS`, `PTIR_PORT` and `LLM_PORT` override the defaults in `docker-compose.yml`.
 
-## Quick start (synthetic sample)
+Demo case with Docker only (no Python install), built inside the container from the synthetic
+sample:
+
+```bash
+mkdir -p cases
+CASE=./cases docker compose run --rm ui sh -c '
+  python samples/make_sample.py /tmp/s > /dev/null &&
+  ptir init /case/demo --name demo --envelope /tmp/s/envelope.json &&
+  for k in "trace.jsonl agent_trace" "requests.jsonl agent_requests" "sysmon.jsonl sysmon" \
+           "ConsoleHost_history.txt psreadline" "zeek_conn.json zeek_conn"; do
+    set -- $k; ptir add /case/demo /tmp/s/$1 --kind $2; done &&
+  ptir ingest /case/demo && ptir analyze /case/demo'
+CASE=./cases/demo docker compose up ui                   # http://127.0.0.1:8000
+```
+
+## Quick start and demo case (synthetic sample)
 
 ```bash
 python samples/make_sample.py                           # writes samples/scenario_exfil/
@@ -102,7 +116,8 @@ agent, git attributed to the human, exfiltration to `collect.attacker-lab.test` 
 | `ptir explain CASE_OR_ROOT --revalidate` | (v0.7) Re-check the stored summaries with the current validation (IDs, entities and relations) without calling the model; the previous summary is kept in `llm.json` as `summary_before_revalidation`. |
 | `ptir llm-pin` | Print the pinned local model, quantisation, server command and sampling (`configs/local-model.json`). |
 | `ptir freeze ROOT [--out F]` | (v0.8) Record every run under `ROOT` (ground truth hash, evidence SHA-256s, family, agent class) and the settings that produce the results into `configs/frozen-runs.json`. |
-| `ptir experiments ROOT [--out D] [--freeze F] [--only K,...]` | (v0.8) Check the runs and settings against the freeze, then score the full system and every baseline and ablation and write `D/RESULTS.md` (default `ROOT/results-v0.8/`), `experiments.json` and one folder per condition. Stops on a difference from the freeze unless `--force`. |
+| `ptir experiments ROOT [--out D] [--freeze F] [--only K,...]` | (v0.8) Check the runs and settings against the freeze, then score the full system and every baseline and ablation and write `D/RESULTS.md` (default `ROOT/results-v0.8/`), `experiments.json` and one folder per condition. Stops on a difference from the freeze, or (v1.0) a missing freeze manifest, unless `--force`. Files are written with LF line endings on every platform. |
+| `ptir package-dataset ROOT [--out Z] [--include F ...]` | (v1.0) Zip, per run, the ground truth, `case.json`, the custody log and `output/*.json` (analysis and local-model summaries), plus any `--include` files (the freeze manifest, `RESULTS.md`). No raw evidence, event database or per-condition re-analyses; `MANIFEST.txt` lists every file's SHA-256. |
 
 `analyze` options:
 
@@ -260,8 +275,9 @@ match the session's tool calls.
 ### Analyst UI (`ptir serve`)
 
 One page (`prompttracir/web/index.html`, Cytoscape vendored under `web/vendor/`, so it works
-offline). The sidebar shows the entry point, impact, findings and the validated local-model
-summary with the sentences validation dropped and why. Tabs:
+offline), in a dark theme with thin, panel-coloured scrollbars (v1.0). The sidebar shows the entry
+point, impact, findings and the validated local-model summary with the sentences validation
+dropped and why. The evidence-state legend sits in a strip under the main view. Tabs:
 
 | Tab | Shows |
 |---|---|
@@ -349,12 +365,13 @@ Mapped to the proposal so the team can split it up:
 | Zeek DNS / HTTP, Security 4663 file reads | done (v0.3) | 4663 needs `tools/audit-canary.ps1` on the VM |
 | Volatility 3 cross-check of the transcript | done (v0.5) | `crosscheck.py` compares the trace with Sysmon / 4688 and memory; processes from a finished run are usually gone from memory, so Sysmon carries most checks |
 | AgentDFIR / OpenTelemetry trace adapters | done (v0.2) | Claude Code transcripts have no PIDs; signature check left to `agentdfir verify` |
-| PromptLocate / TracLLM / AttnTrace modules | done (v0.5) except AttnTrace | segment (PromptLocate-style) and group search (TracLLM-style) localizers; AttnTrace needs attention weights an OpenAI-compatible server does not return |
+| PromptLocate / TracLLM / AttnTrace modules | done (v0.5) except AttnTrace | segment (PromptLocate-style) and group search (TracLLM-style) localizers; AttnTrace not built: it needs attention weights an OpenAI-compatible server does not return (ROADMAP section 6) |
 | STIX 2.1 export with ATLAS tags | done (v0.7) | `ptir export-stix`; all 35 lab cases pass the OASIS validator |
 | Multi-run evaluation | done (v0.2) | `ptir eval-batch` |
 | Ablations | done (v0.4, v0.8) | `--without KIND` for evidence kinds; `--ablate pids` and `--ablate context_ids` inside the trace; all six proposal ablations in `ptir experiments` |
 | Baselines | done (v0.8) | trace only, endpoint only, timestamp only, cue-only localizers; AgentDFIR approximated by trace only (not run itself) |
 | Dataset freeze, results tables | done (v0.8) | `ptir freeze`, `ptir experiments`, [docs/RESULTS.md](docs/RESULTS.md) |
+| Dataset package, limitations, demo case | done (v1.0) | `ptir package-dataset`, [docs/LIMITATIONS.md](docs/LIMITATIONS.md), the synthetic demo case (quick start, or Docker only) |
 | Analyst study (Plaso / Timesketch comparison) | **cut** | no ethics clearance or time before 29 Nov (ROADMAP section 6); Table III reports it as not measured |
 
 ## Repository layout
@@ -370,7 +387,7 @@ tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-s
 configs/        attribution-defaults.json, local-model.json (pinned model and server), tuning procedure,
                 frozen-runs.json (v0.8 dataset and settings freeze)
 docs/           TESTING.md (automated tests, lab runs, acceptance checks), DATASET_PROGRESS.md, STIX_EXTENSION.md,
-                RESULTS.md (v0.8, generated by `ptir experiments`)
+                RESULTS.md (v0.8, generated by `ptir experiments`), LIMITATIONS.md (v1.0)
 Dockerfile, docker-compose.yml   UI / CLI image and the pinned local model server (v0.7)
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests

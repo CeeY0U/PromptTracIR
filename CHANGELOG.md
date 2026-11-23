@@ -2,6 +2,35 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [1.0.0] - 2026-11-23
+
+Final release (roadmap v1.0). No metric changed after the v0.8 freeze: `docs/RESULTS.md` is the
+same file.
+
+### Added
+- `ptir package-dataset ROOT [--out Z] [--include F ...]`: zips every run's ground truth,
+  `case.json`, custody log and `output/*.json` (analysis and local-model summaries), plus extra
+  files such as the freeze manifest and `RESULTS.md`, with a SHA-256 `MANIFEST.txt`. Raw evidence,
+  event databases and per-condition re-analyses are left out.
+- `docs/LIMITATIONS.md`: what the results do and do not show (dataset, metrics, method, software).
+- README: a demo case built entirely inside the Docker image.
+
+### Changed
+- Analyst UI theme: thin scrollbars in the panel colour (no arrow buttons in Chrome and Edge;
+  thin and dark in Firefox), a tab bar for the five views and a primary Export STIX button, the
+  evidence-state legend as a strip under the main view (it covered the end of the attack flow),
+  softer cards and state pills, the first deviation marked by a red edge and tint, monospace for
+  command lines, times, PIDs and hashes, sticky table headers, no mid-word wrapping in the
+  timeline and evidence tables, wrapped paths in the detail pane, and graph labels on a dark
+  background with more spacing between nodes.
+- `ptir experiments` stops (exit 2) when the freeze manifest is missing, unless `--force`; it used
+  to warn and run unchecked.
+- `ptir experiments` writes `RESULTS.md` and `experiments.json` with LF line endings on every
+  platform, so a plain `diff` against `docs/RESULTS.md` works on Windows.
+- ROADMAP: section 6 is now "Project decisions", stated as decisions taken (schedule with release
+  dates, plain agent loop, single-page UI, AttnTrace not built); v1.0 status.
+- README, DATASET_PROGRESS (dataset package). Version 1.0.0. Tests: 197 -> 199.
+
 ## [0.8.0] - 2026-11-22
 
 Roadmap v0.8 (evaluation release): the dataset and settings are frozen and one command produces

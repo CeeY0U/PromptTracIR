@@ -123,3 +123,28 @@ def test_cli_freeze_then_experiments(runs, tmp_path, capsys):
                          "--only", "full"]) == 2
     finally:
         (runs / "s1" / "ground_truth.json").write_text(json.dumps(gt))
+
+
+def test_v10_missing_freeze_stops_unless_forced(runs, tmp_path):
+    missing = str(tmp_path / "no-such-manifest.json")
+    assert cli_main(["experiments", str(runs), "--out", str(tmp_path / "a"), "--freeze", missing, "--only", "full"]) == 2
+    assert not (tmp_path / "a").exists()
+    assert cli_main(["experiments", str(runs), "--out", str(tmp_path / "b"), "--freeze", missing,
+                     "--only", "full", "--force"]) == 0
+    assert b"\r\n" not in (tmp_path / "b" / "RESULTS.md").read_bytes()          # LF on every platform
+
+
+def test_v10_dataset_package_leaves_out_raw_evidence(runs, tmp_path):
+    import zipfile
+    manifest = tmp_path / "frozen.json"
+    cli_main(["freeze", str(runs), "--out", str(manifest)])
+    out = tmp_path / "ds.zip"
+    assert cli_main(["package-dataset", str(runs), "--out", str(out), "--include", str(manifest)]) == 0
+    names = zipfile.ZipFile(out).namelist()
+    assert "runs/s1/ground_truth.json" in names and "runs/s1/case/case.json" in names
+    assert "runs/s1/case/output/graph.json" in names and "frozen.json" in names
+    assert {"README.txt", "MANIFEST.txt"} <= set(names)
+    assert not any("/evidence/" in n or n.endswith(".duckdb") for n in names)
+    assert not any(n.startswith("runs/s1/case/output/") and n.count("/") > 4 for n in names)   # no output/<tag>/
+    listed = zipfile.ZipFile(out).read("MANIFEST.txt").decode().splitlines()
+    assert len(listed) == len(names) - 2

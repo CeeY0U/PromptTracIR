@@ -178,7 +178,7 @@ Status (2026-11-21, v0.7.0): built and tested.
 - `Dockerfile` and `docker-compose.yml`: the UI and CLI (`ui`) and the pinned llama.cpp server (`model`, profile `llm`). Not yet run on a lab machine.
 - Relationship check for local-model summaries: a sentence is dropped when its verb or claim does not match the graph (an injection said to come from anything but the entry point or its source, a deviation claim not citing the first deviating call, an effect not reachable from the cited actor, or a verb the cited actor cannot do). `ptir explain --revalidate` re-checks stored summaries without the model. The summary prompt now also receives the entry points and first deviation.
 - Graph fix: an in-process write (no child process) goes to the tool call whose trace claims it when it lands up to 0.25 s outside that call's window, so jt-i1's `notes.md` is no longer credited to the curl upload. Test 7 metrics on the 33 runs are unchanged.
-- Decision: keep the single-page UI (decision 3 below).
+- Decision: keep the single-page UI (section 6, item 3).
 
 Status (2026-11-22, v0.7 checked): the "done when" is met. On Kali, `docker compose build ui` built the image, `docker compose up` served a demo case built inside the container and the jt-i1 lab case copied from the Windows laptop (attack flow, raw records, all 576 preserved files verified), and the jt-i1 STIX bundle passed the validator. Re-scoring the 33 runs on v0.7.0 left every Test 7 metric unchanged. The v0.7 prompt on the lab VM (same model and settings, 13 runs): unsupported before validation 0.091 over all scored runs (7 of 77) and 0.113 on the training split (6 of 53), 0 after; about 0.042 on the test families (1 of 24); verdicts 13 of 13. So the v0.7 prompt halves the v0.6 rate under the same checks (0.229 on training) but still misses 5 percent. Reading the 8 dropped sentences: 3 were about what the agent runtime does for itself (its traffic to the model server, the harness's copies of fetched pages), which the time-window join had credited to the running tool call; 2 repeated the prompt's rule wording; 1 was a true denial ("the process did not write or read any files") dropped for the verbs it denied; 2 were wrong relations. Three summaries had only two sentences, so the report gives sentences per summary next to the rate.
 
@@ -210,7 +210,7 @@ Status (2026-11-22, v0.8.0): built and measured on copies of the 35 lab cases; t
 - One script: `ptir experiments runs` scores the full analysis, re-analyses every run once per baseline and ablation into `output/<tag>/`, and writes `RESULTS.md` (dataset, Table III by split and agent class, baselines, ablations, narrative), `experiments.json` and per-condition `results.json` / `per_run.csv`. `RESULTS.md` has no dates or paths, so a re-run must give the same file. About 10 to 20 minutes on the laptop.
 - Baselines: trace only (agent-side records; stands in for AgentDFIR, which reads the same records and was not run itself), endpoint only (no agent trace), timestamp only (`--ablate timestamp_links`: links to the nearest process in the call window, attribution by session time), and the cue-only localizers (v0.1 and current cues).
 - Ablations: without PID capture (`--ablate pids`), without context identifiers (`--ablate context_ids`, rebuilt from time order), without memory, without network evidence (Zeek, PCAP), without Sysmon, without the local model.
-- Results on the 33 scored runs: every Table III target with a measured value is met except narrative grounding before validation (0.091 on the training split against 0.05; 0 after validation). Analyst utility is not measured (decision 5, section 6), so that row stays empty and the "done when" is met for the other six rows only.
+- Results on the 33 scored runs: every Table III target with a measured value is met except narrative grounding before validation (0.091 on the training split against 0.05; 0 after validation). Analyst utility is not measured (section 6, item 1), so that row stays empty and the "done when" is met for the other six rows only.
 - What the baselines and ablations show: trace only reconstructs the trace side (localization 1.0) but links no process, attributes nothing and gets chain edge F1 0.706 with no exact path; endpoint only finds no attack at all (attribution macro-F1 0.241); timestamp only links 0.895 of tool calls correctly, mislabels processes (attribution 0.952), flags 2 of 21 clean runs, misses one tampered trace and reports 4 contradictions on untampered runs. Without PID capture link recall falls to 0.158, attribution to 0.859, chain edge F1 to 0.706 and impact accuracy to 0, and neither tampered copy is detected. Without Sysmon: attribution 0.876, chain edge 0.9, impact 0. Without network evidence impact accuracy falls to 0 (nothing can be confirmed) while everything else holds. Without memory nothing changes on these runs. Without context identifiers nothing changes because no trace event changes: every agent in the dataset ran one call at a time with its full history in context, so the identifiers are recoverable from time order. The local model adds only the narrative and call verdicts.
 
 ### v1.0: Final
@@ -218,6 +218,14 @@ Status (2026-11-22, v0.8.0): built and measured on copies of the 35 lab cases; t
 - Fix what the evaluation exposed, without tuning on the test split.
 - Documentation, a demo case, a limitations section, dataset packaging.
 - Tag `v1.0.0`.
+
+Status (2026-11-23, v1.0.0): released.
+- What the evaluation exposed: the narrative target is missed and stays missed (the prompt is frozen; tuning further on eight training summaries would fit them, and the test split must not be used); context identifiers and memory made no difference on these runs (docs/LIMITATIONS.md explains why). No metric was tuned after the freeze, so `docs/RESULTS.md` is unchanged from v0.8.0. Two tooling fixes: `ptir experiments` stops when the freeze manifest is missing (it used to warn and run), and writes its files with LF line endings, so they compare equal to `docs/RESULTS.md` on Windows.
+- UI: a calmer dark theme. Thin scrollbars in the panel colour, a tab bar for the five views, the evidence-state legend as a strip under the main view instead of over the attack flow, softer cards and state pills, monospace for command lines, times, PIDs and hashes, table headers that stay visible, wrapped paths in the detail pane, and graph labels on a dark background.
+- Documentation: `docs/LIMITATIONS.md` (dataset, metrics, method, software); section 6 rewritten as the decisions taken.
+- Demo case: the synthetic sample (`samples/make_sample.py`), built natively (README quick start) or entirely inside the Docker image.
+- Dataset package: `ptir package-dataset runs` zips every run's ground truth, case metadata, custody log and analysis output with the freeze manifest and `RESULTS.md`, without raw evidence.
+- Left for the team: the written report.
 
 ---
 
@@ -312,28 +320,24 @@ Rules (also in `docs/DATASET_PROGRESS.md`):
 - Capture all evidence kinds on every run, even those no parser reads yet.
 - Synthetic secrets and isolated machines only.
 
-## 6. Decisions the team needs to make
+## 6. Project decisions
 
-1. **Deadline: 29 November 2026, 23:59.** Two weeks from the first lab runs, so every version below gets two or three days and the dataset is collected alongside, not after:
+1. **Schedule: submission on 29 November 2026, 23:59.** The plan gave each version two or three days from the first lab runs, with the dataset collected alongside the code rather than after it. Every version shipped on or ahead of its target date:
 
-   | Version | Target date | Scope for the deadline |
-   |---|---|---|
-   | v0.3.1 | 16 Nov | fixes from the first lab runs, scripted model |
-   | v0.4.0 | 16 Nov (code), 18 Nov (lab rerun) | attribution engine; rerun the lab (real model with temperature and seeds, plus scripted runs) and record the first attribution numbers |
-   | v0.5 | 21 Nov | localizer interface, memory cross-check, chain metrics |
-   | v0.6 | 23 Nov | local-model classification and grounded summary on real runs |
-   | v0.7 | 25 Nov | STIX 2.1 export; keep the single-page UI (record the React change) |
-   | v0.8 | 27 Nov | freeze the dataset on 26 Nov; baselines, ablations, Table III |
-   | v1.0 | 29 Nov, 23:59 | report, limitations, demo case, tag `v1.0.0`; 28 to 29 Nov is buffer |
+   | Version | Target date | Released | Scope |
+   |---|---|---|---|
+   | v0.3.1 | 16 Nov | 15 Nov | fixes from the first lab runs, scripted model |
+   | v0.4 | 16 Nov (code), 18 Nov (lab rerun) | 16 Nov (v0.4.0, v0.4.1) | attribution engine and first attribution numbers |
+   | v0.5 | 21 Nov | 17 Nov (v0.5.0), 21 Nov (v0.5.1) | localizer interface, memory cross-check, chain metrics |
+   | v0.6 | 23 Nov | 21 Nov | local-model classification and grounded summary on real runs |
+   | v0.7 | 25 Nov | 22 Nov (v0.7.0, v0.7.1) | analyst views, STIX 2.1 export, Docker Compose |
+   | v0.8 | 27 Nov | 22 Nov | dataset and settings frozen; baselines, ablations, Table III |
+   | v1.0 | 29 Nov, 23:59 | 23 Nov | final release: UI, limitations, demo case, dataset package |
 
-   At about two lab runs an hour, the 16 runs still needed on 16 Nov are about eight hours in total. If the dataset is short on 26 Nov, freeze what exists and report the counts per cell (`docs/DATASET_PROGRESS.md`) rather than slipping v0.8. The analyst study (Plaso / Timesketch comparison) is the first thing to cut if time runs out.
+   The dataset was complete on 21 Nov (30 slots, counted by outcome, section 5) and frozen on 22 Nov, four days before the planned 26 Nov freeze. The plan named the analyst study (a timed comparison with Plaso / Timesketch) as the first thing to cut if time ran short. It was cut: no ethics clearance was obtained and a fair comparison does not fit before 29 Nov, so Table III reports Analyst utility as not measured.
 
-   Progress on 21 Nov: v0.5 is released, v0.6.0 is built (two days ahead of the table), and the dataset is complete (30 slots, counted by outcome, section 5). Left before the freeze: the v0.6 narrative measurement on the lab VM, and optionally two scripted exfiltration runs for impact accuracy.
+2. **Agent harness: a plain tool loop, not LangGraph.** The proposal named a LangGraph agent. The harness stays a plain loop. Every lab run was collected with it and the dataset is frozen, so a port would change the agent under test after the fact. The loop records everything the evaluation needs (tool calls, context fragments, model calls, child PIDs), and Claude Code covers a second, production agent. The report records the change.
 
-   Progress later on 21 Nov: v0.6.0 is released and measured (RQ4, v0.6 status), the two scripted exfiltration runs are in (jt-i1, jt-i2), and v0.7.0 is built four days ahead of the table. Left before the freeze: the v0.7 prompt measurement on the VM and the Docker check.
+3. **Analyst UI: a single page, not React.** The proposal named React. The UI stays one HTML page. It needs no build step or Node toolchain, ships inside the Python package and the Docker image, and works offline with the vendored Cytoscape. Every view the proposal describes is in it: attack flow, timeline, evidence, raw records and export. The report records the change.
 
-   Progress on 22 Nov: v0.7.0 and v0.7.1 are released and checked (Docker on Kali, two VM narrative runs), and v0.8.0 is built five days ahead of the table: the dataset and settings are frozen and every results table comes from `ptir experiments`. Left: v1.0 (report, limitations, demo case, dataset packaging).
-2. **LangGraph.** The proposal names a LangGraph agent; the harness is a plain loop. Recorded on 22 Nov (v0.8.0): keep the plain loop. Every lab run was collected with it and the dataset is frozen; a port would change the agent under test after the fact. The loop records what the evaluation needs (tool calls, context fragments, model calls, child PIDs), and Claude Code covers a second, production agent. Record the change in the report.
-3. **React.** The proposal names React; the UI is one HTML page. Decided on 21 Nov (v0.7.0): keep the single page. It needs no build step or Node toolchain, ships inside the Python package and the Docker image, works offline with the vendored Cytoscape, and every view the proposal describes (attack flow, timeline, evidence, raw records, export) is in it. A React port would add a second toolchain four days before the freeze without adding a view. Record the change in the report.
-4. **AttnTrace.** It needs attention weights that an OpenAI-compatible server does not return. Keep it optional unless someone wants to run the model through a library that exposes them.
-5. **Ethics clearance** for the analyst study has lead time. Ask about it now, not at v0.8. Recorded on 22 Nov (v0.8.0): the analyst study is cut, as planned in decision 1 (the first thing to cut). No clearance was obtained and there is no time to run a fair comparison with Plaso / Timesketch before 29 Nov, so the Analyst utility row of Table III is reported as not measured, with the UI's attack flow and raw-record views described instead.
+4. **AttnTrace: not built.** AttnTrace needs the model's attention weights, which llama-server's OpenAI-compatible API does not return. Span localization is covered by the segment localizer (PromptLocate-style, the frozen default), the group-search localizer (TracLLM-style) and leave-one-out replay. Running the model through a library that exposes attention would change the frozen setup. The report lists AttnTrace as a limitation.
