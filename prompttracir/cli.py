@@ -121,8 +121,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", help="results folder (default: ROOT/results-v0.8)")
     p.add_argument("--freeze", default="configs/frozen-runs.json",
                    help="manifest from `ptir freeze` to check the runs and settings against (default %(default)s)")
-    p.add_argument("--force", action="store_true", help="run even if the runs or settings differ from the freeze")
+    p.add_argument("--force", action="store_true",
+                   help="run even if the freeze manifest is missing or the runs or settings differ from it")
     p.add_argument("--only", help="comma-separated condition keys (full always runs), e.g. full,no-sysmon")
+    p.add_argument("--case-name", default="case")
+
+    p = sub.add_parser("package-dataset", help="v1.0: zip ground truths, case metadata and analysis output (no raw evidence)")
+    p.add_argument("root", help="folder of runs (the frozen dataset)")
+    p.add_argument("--out", default="prompttracir-dataset.zip", help="zip to write (default %(default)s)")
+    p.add_argument("--include", action="append", default=[], metavar="FILE",
+                   help="extra file to add at the top level (e.g. configs/frozen-runs.json, RESULTS.md); repeat")
     p.add_argument("--case-name", default="case")
 
     p = sub.add_parser("explain", help="local-model verdicts and grounded summary for analysed case(s)")
@@ -296,6 +304,13 @@ def main(argv: list[str] | None = None) -> int:
         n = len(manifest["runs"])
         print(f"froze {n} runs ({sum(r['tampered'] for r in manifest['runs'])} tampered copies) "
               f"and settings {manifest['settings']} into {a.out}")
+    elif a.cmd == "package-dataset":
+        from .experiments import package_dataset
+        info = package_dataset(a.root, a.out, a.case_name, [Path(x) for x in a.include])
+        if not info["runs"]:
+            print(f"no runs under {a.root}", file=sys.stderr)
+            return 1
+        print(f"packaged {info['runs']} cases ({info['files']} files, {info['bytes'] // 1024} KiB) into {info['out']}")
     elif a.cmd == "experiments":
         from .experiments import check_freeze, run_experiments
         fz = Path(a.freeze)
@@ -309,7 +324,10 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"runs and settings match {fz}")
         else:
-            print(f"no freeze manifest at {fz}: the runs are not checked (ptir freeze ROOT)", file=sys.stderr)
+            print(f"no freeze manifest at {fz} (ptir freeze ROOT writes one)", file=sys.stderr)
+            if not a.force:
+                print("stopping: the runs cannot be checked (use --force to run anyway)", file=sys.stderr)
+                return 2
         out = Path(a.out or Path(a.root) / "results-v0.8")
         only = [x.strip() for x in a.only.split(",")] if a.only else None
         run_experiments(a.root, out, a.case_name, only=only, progress=lambda m: print(m, flush=True))

@@ -179,8 +179,9 @@ def run_experiments(root: str | Path, out: str | Path, case_name: str = "case",
     dataset = dataset_counts(reports["full"]) if "full" in reports else {}
     result = {"prompttracir": __version__, "settings": settings(), "dataset": dataset,
               "conditions": summary}
-    (out / "experiments.json").write_text(json.dumps(result, indent=2, default=str))
-    (out / "RESULTS.md").write_text(render(result))
+    # v1.0: always LF, so the file compares equal to docs/RESULTS.md on Windows too
+    (out / "experiments.json").write_text(json.dumps(result, indent=2, default=str) + "\n", newline="\n")
+    (out / "RESULTS.md").write_text(render(result), newline="\n")
     return result
 
 
@@ -221,6 +222,46 @@ def dataset_counts(full: dict) -> dict:
         counts[outcome][cls] += 1
     return {"by_outcome": counts, "scored_runs": sum(sum(v.values()) for v in counts.values()),
             "tampered_copies": tampered}
+
+
+# ---------------------------------------------------------------- dataset package (v1.0)
+
+def package_dataset(root: str | Path, out: str | Path, case_name: str = "case",
+                    extra: list[Path] | None = None) -> dict:
+    """Zip what is needed to check the published numbers without the raw evidence: per run the
+    ground truth, case.json (evidence hashes and the envelope), the custody log and the analysis
+    output (output/*.json, including the local-model summaries), plus the freeze manifest and any
+    extra files (RESULTS.md, experiments.json). Evidence copies, the event database and the
+    per-condition re-analyses stay out: they are large, and the evidence holds memory-derived and
+    host data. MANIFEST.txt lists every file with its SHA-256."""
+    import zipfile
+    runs = find_runs(root, case_name)
+    files: list[tuple[str, Path]] = []
+    for run in runs:
+        files.append((f"runs/{run.name}/ground_truth.json", run / "ground_truth.json"))
+        case = run / case_name
+        for name in ("case.json", "custody.jsonl"):
+            if (case / name).exists():
+                files.append((f"runs/{run.name}/case/{name}", case / name))
+        for f in sorted((case / "output").glob("*.json")):
+            files.append((f"runs/{run.name}/case/output/{f.name}", f))
+    for f in extra or []:
+        if Path(f).exists():
+            files.append((Path(f).name, Path(f)))
+    lines = []
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for arc, path in files:
+            data = path.read_bytes()
+            lines.append(f"{hashlib.sha256(data).hexdigest()}  {arc}")
+            z.writestr(zipfile.ZipInfo(arc, date_time=(2026, 11, 22, 0, 0, 0)), data, zipfile.ZIP_DEFLATED)
+        readme = (f"PromptTracIR {__version__} dataset package: {len(runs)} cases (ground truth, case metadata, "
+                  "custody log, analysis output). Raw evidence is not included; case.json lists the SHA-256 of "
+                  "every evidence file. Regenerate the tables with `ptir experiments` on the full runs.\n")
+        z.writestr(zipfile.ZipInfo("README.txt", date_time=(2026, 11, 22, 0, 0, 0)), readme)
+        z.writestr(zipfile.ZipInfo("MANIFEST.txt", date_time=(2026, 11, 22, 0, 0, 0)), "\n".join(lines) + "\n")
+    return {"runs": len(runs), "files": len(files), "out": str(out), "bytes": out.stat().st_size}
 
 
 # ---------------------------------------------------------------- rendering

@@ -25,6 +25,11 @@ Code runs' gold links were refreshed for v0.6.0 (`python harness/label_run.py RU
 The run folders are not in the repository (they hold evidence and memory-derived output); the
 manifest is what ties the published numbers to them.
 
+For submission, `ptir package-dataset runs --include configs/frozen-runs.json --include
+docs/RESULTS.md` (v1.0) zips each run's ground truth, `case.json` (with every evidence hash), custody
+log and analysis output, including the local-model summaries. Raw evidence, the event databases and
+the per-condition re-analyses are left out.
+
 ## Progress
 
 | Agent | Done | Planned |

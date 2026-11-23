@@ -8,67 +8,125 @@
 <!-- v0.7: Cytoscape is served from /static (vendored, MIT), so the page works offline in the lab -->
 <script src="/static/cytoscape.min.js"></script>
 <style>
-  :root { --bg:#0f1216; --panel:#171b21; --line:#2a313b; --text:#d9dee5; --muted:#8a94a3;
-          --agent:#e5534b; --human:#539bf5; --obs:#9aa4b2; --corr:#57ab5a; --inf:#e0823d; --contra:#f47067; }
+  /* v1.0: calmer dark theme; scrollbars, inputs and panels share the background tones */
+  :root { --bg:#0d1117; --panel:#131820; --raised:#181e27; --hover:#1e2530; --line:#242c37; --line2:#303a47;
+          --text:#d6dde6; --muted:#8792a2; --faint:#5c6675; --accent:#4f8cc9;
+          --agent:#e5534b; --human:#539bf5; --obs:#9aa4b2; --corr:#57ab5a; --inf:#e0823d; --contra:#f47067;
+          --mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace; }
   * { box-sizing:border-box; }
-  body { margin:0; font:13px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text);
-         display:grid; grid-template-columns:320px 1fr 380px; grid-template-rows:44px 1fr; height:100vh; }
-  header { grid-column:1/4; display:flex; align-items:center; gap:8px; padding:0 14px;
+  html { color-scheme: dark; }
+  body { margin:0; font:13px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--text);
+         display:grid; grid-template-columns:330px minmax(0,1fr) 400px; grid-template-rows:52px minmax(0,1fr);
+         height:100vh; overflow:hidden; }
+
+  /* scrollbars: thin, the colour of the panels, a little lighter on hover */
+  /* Chrome / Edge use the ::-webkit-scrollbar rules below (no arrow buttons); the standard
+     properties are only for browsers without them (Firefox), since they override those rules */
+  @supports not selector(::-webkit-scrollbar) { * { scrollbar-width:thin; scrollbar-color:#2a323d transparent; } }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:#252d38; border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background:#36404d; border:2px solid transparent; background-clip:padding-box; }
+  ::-webkit-scrollbar-button { display:none; width:0; height:0; }
+
+  header { grid-column:1/4; display:flex; align-items:center; gap:10px; padding:0 18px;
            border-bottom:1px solid var(--line); background:var(--panel); }
-  header b { font-size:14px; letter-spacing:.3px; margin-right:6px; }
+  .brand { display:flex; align-items:center; gap:9px; font-weight:600; font-size:15px; letter-spacing:.2px; }
+  .brand i { width:10px; height:10px; border-radius:3px; background:linear-gradient(135deg, var(--agent), var(--inf)); display:inline-block; }
+  #casename { color:var(--muted); font-size:13px; margin-left:2px; }
+  .tabs { display:flex; gap:2px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px; }
+  .tabs button { border:0; background:transparent; color:var(--muted); padding:5px 12px; border-radius:6px; }
+  .tabs button:hover { color:var(--text); background:var(--hover); }
+  .tabs button.on { background:var(--raised); color:var(--text); box-shadow:0 0 0 1px var(--line2) inset; }
   .muted, .k { color:var(--muted); }
-  button, .btn { background:transparent; color:var(--text); border:1px solid var(--line); border-radius:6px;
-           padding:4px 10px; cursor:pointer; font:inherit; text-decoration:none; }
-  button.on { background:#2d333b; }
-  aside, #detail { overflow:auto; padding:12px; background:var(--panel); }
+  button, .btn { background:transparent; color:var(--text); border:1px solid var(--line2); border-radius:7px;
+           padding:5px 12px; cursor:pointer; font:inherit; text-decoration:none; }
+  button:hover, .btn:hover { background:var(--hover); }
+  .btn.primary { border-color:#2f5d8a; background:#16283b; color:#cfe3f7; }
+  .btn.primary:hover { background:#1c3550; }
+
+  aside, #detail { overflow-y:auto; overflow-x:hidden; padding:16px; background:var(--panel); min-height:0; }
   aside { border-right:1px solid var(--line); }
-  #detail { border-left:1px solid var(--line); }
-  h3 { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin:16px 0 6px; }
+  #detail { border-left:1px solid var(--line); overflow-wrap:anywhere; }
+  h3 { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.9px; color:var(--faint); margin:22px 0 8px; }
   h3:first-child { margin-top:0; }
-  .card { border:1px solid var(--line); border-radius:6px; padding:8px; margin-bottom:6px; cursor:pointer; }
-  .card:hover { border-color:#444c56; }
-  .sev-high { border-left:3px solid var(--agent); } .sev-medium { border-left:3px solid var(--inf); }
-  .sev-info { border-left:3px solid var(--obs); }
-  .pill { display:inline-block; padding:0 6px; border-radius:9px; font-size:11px; background:#2d333b; margin:0 4px 2px 0; }
-  .confirmed { background:#5c1f1c; } .probable { background:#5a3a14; } .possible { background:#4a4314; }
-  .st-corroborated { color:var(--corr); border:1px solid var(--corr); background:transparent; }
-  .st-observed { color:var(--obs); border:1px solid var(--obs); background:transparent; }
-  .st-inferred { color:var(--inf); border:1px dashed var(--inf); background:transparent; }
-  .st-contradicted { color:var(--contra); border:1px solid var(--contra); background:#3a1715; }
+  .card { border:1px solid var(--line); background:var(--raised); border-radius:8px; padding:10px 12px; margin-bottom:8px;
+          cursor:pointer; transition:border-color .12s, background .12s; overflow-wrap:anywhere; }
+  .card:hover { border-color:var(--line2); background:var(--hover); }
+  .card b { font-weight:600; }
+  .card ul { color:var(--muted); }
+  .sev-high { box-shadow:inset 3px 0 0 var(--agent); } .sev-medium { box-shadow:inset 3px 0 0 var(--inf); }
+  .sev-info { box-shadow:inset 3px 0 0 var(--obs); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; background:#232b36; color:#b9c3cf;
+          margin:0 4px 3px 0; white-space:nowrap; }
+  .confirmed { background:#4a1d1b; color:#ffb4ab; } .probable { background:#4a3214; color:#f5c58a; } .possible { background:#3f3a14; color:#e9dc8a; }
+  .st-corroborated { color:var(--corr); box-shadow:0 0 0 1px #2e5a30 inset; background:#13241a; }
+  .st-observed { color:#b5bec9; box-shadow:0 0 0 1px #3a4350 inset; background:transparent; }
+  .st-inferred { color:var(--inf); box-shadow:none; border:1px dashed #7a4a22; background:#24180e; padding:0 7px; }
+  .st-contradicted { color:#ffb4ab; box-shadow:0 0 0 1px #7a2f2a inset; background:#341614; }
   .at-agent { color:var(--agent); } .at-human { color:var(--human); }
-  #main { position:relative; overflow:hidden; }
+  .mono, pre, code { font-family:var(--mono); }
+
+  #main { display:flex; flex-direction:column; min-height:0; min-width:0; }
+  #view { position:relative; flex:1; min-height:0; overflow:hidden; }
   #cy, .pane { position:absolute; inset:0; }
-  .pane { overflow:auto; display:none; padding:12px; }
+  .pane { overflow:auto; display:none; padding:18px 22px; }
   table { border-collapse:collapse; width:100%; font-size:12px; }
-  td, th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
-  tr.click:hover td { background:#1c2128; cursor:pointer; }
-  tr.row-contradicted td:first-child { border-left:3px solid var(--contra); }
-  tr.row-corroborated td:first-child { border-left:3px solid var(--corr); }
-  tr.row-observed td:first-child { border-left:3px solid var(--obs); }
-  tr.row-inferred td:first-child { border-left:3px dashed var(--inf); }
-  pre { white-space:pre-wrap; word-break:break-all; background:#0f1216; border:1px solid var(--line);
-        padding:8px; border-radius:6px; font-size:11.5px; margin:4px 0; }
-  .legend { position:absolute; left:10px; bottom:10px; background:rgba(23,27,33,.92); border:1px solid var(--line);
-            border-radius:6px; padding:6px 10px; font-size:11px; color:var(--muted); z-index:5; }
-  .legend span { margin-right:10px; }
-  .step { border:1px solid var(--line); border-radius:8px; padding:10px; margin:0 0 10px 0; background:var(--panel); }
-  .step.dev { border-color:var(--agent); }
-  .step h4 { margin:0 0 6px; font-size:13px; }
-  .stage { font-size:10px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); }
-  .arrow { text-align:center; color:var(--muted); margin:-4px 0 6px; }
-  .sub { margin:4px 0 0 14px; }
-  .filters { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
-  input, select { background:#0f1216; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; }
-  .drop { border-left:3px solid var(--contra); padding-left:6px; margin:4px 0; }
+  th { position:sticky; top:0; background:var(--bg); color:var(--faint); font-weight:600; font-size:11px;
+       text-transform:uppercase; letter-spacing:.6px; z-index:1; }
+  td, th { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+  td { overflow-wrap:normal; }
+  td:last-child { overflow-wrap:anywhere; }
+  #timeline td:nth-child(-n+5), #timeline th { white-space:nowrap; }
+  #timeline td:nth-child(1), #timeline td:nth-child(4) { font-family:var(--mono); font-size:11.5px; color:#b9c3cf; }
+  #evidence td:nth-child(1), #evidence td:nth-child(3), #evidence td:nth-child(4), #evidence th { white-space:nowrap; }
+  #evidence td:nth-child(2) { overflow-wrap:anywhere; }
+  #evidence td:nth-child(4) { font-family:var(--mono); font-size:11.5px; }
+  tr.click:hover td { background:var(--hover); cursor:pointer; }
+  tr.row-contradicted td:first-child { box-shadow:inset 3px 0 0 var(--contra); }
+  tr.row-corroborated td:first-child { box-shadow:inset 3px 0 0 var(--corr); }
+  tr.row-observed td:first-child { box-shadow:inset 3px 0 0 var(--obs); }
+  tr.row-inferred td:first-child { box-shadow:inset 3px 0 0 var(--inf); }
+  pre { white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere; background:var(--bg); border:1px solid var(--line);
+        padding:10px 12px; border-radius:7px; font-size:11.5px; line-height:1.55; margin:6px 0; color:#c9d1db; }
+  .legend { display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding:8px 18px; border-top:1px solid var(--line);
+            background:var(--panel); font-size:11.5px; color:var(--muted); }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .legend i { display:inline-block; width:18px; height:0; border-top:2px solid; }
+  .legend i.dash { border-top-style:dashed; }
+  .legend i.box { width:9px; height:9px; border:0; border-radius:2px; }
+
+  /* attack flow */
+  #flow { max-width:none; }
+  .step { position:relative; border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:0;
+          background:var(--raised); cursor:pointer; overflow-wrap:anywhere; }
+  .step:hover { border-color:var(--line2); }
+  .step.dev { border-color:#6b2c28; background:linear-gradient(180deg, #221516 0%, var(--raised) 60%);
+              box-shadow:inset 3px 0 0 var(--agent); }
+  .step h4 { margin:2px 0 8px; font-size:14px; font-weight:600; }
+  .step pre { margin-top:8px; }
+  .stage { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.9px; color:var(--faint); }
+  .step.dev .stage { color:#d98580; }
+  .arrow { width:2px; height:18px; margin:0 0 0 28px; background:var(--line2); color:transparent; overflow:hidden; }
+  .sub { margin:6px 0 0 4px; padding-left:12px; border-left:1px solid var(--line); line-height:1.6; }
+  .sub .k { font-family:var(--mono); font-size:11.5px; }
+  .filters { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+  input, select { background:var(--bg); color:var(--text); border:1px solid var(--line2); border-radius:7px;
+                  padding:6px 10px; font:inherit; outline:none; }
+  input:focus, select:focus { border-color:var(--accent); }
+  input[type=checkbox] { accent-color:var(--accent); padding:0; }
+  .drop { box-shadow:inset 3px 0 0 var(--contra); background:#1a1416; border-radius:6px; padding:8px 10px; margin:6px 0; }
+  .summary { color:#c9d1db; line-height:1.6; }
+  .hint { color:var(--faint); padding:4px 2px; }
+  .rawbox:empty { display:none; }
 </style>
 </head>
 <body>
 <header>
-  <b>PromptTracIR</b><span class="muted" id="casename"></span>
+  <span class="brand"><i></i>PromptTracIR</span><span id="casename"></span>
   <span style="flex:1"></span>
-  <button id="bFlow" class="on">Attack flow</button><button id="bChain">Chain graph</button>
-  <button id="bFull">Full graph</button><button id="bTime">Timeline</button><button id="bEv">Evidence</button>
-  <a class="btn" href="/api/export/stix" title="STIX 2.1 bundle with MITRE ATLAS / ATT&CK tags">Export STIX</a>
+  <nav class="tabs"><button id="bFlow" class="on">Attack flow</button><button id="bChain">Chain graph</button><button id="bFull">Full graph</button><button id="bTime">Timeline</button><button id="bEv">Evidence</button></nav>
+  <a class="btn primary" href="/api/export/stix" title="STIX 2.1 bundle with MITRE ATLAS / ATT&amp;CK tags">Export STIX</a>
 </header>
 <aside>
   <h3>Entry point</h3><div id="entry"></div>
@@ -77,17 +135,19 @@
   <h3>Local-model summary</h3><div id="narrative"></div>
 </aside>
 <div id="main">
-  <div id="cy"></div>
-  <div id="flow" class="pane"></div>
-  <div id="timeline" class="pane"></div>
-  <div id="evidence" class="pane"></div>
+  <div id="view">
+    <div id="cy"></div>
+    <div id="flow" class="pane"></div>
+    <div id="timeline" class="pane"></div>
+    <div id="evidence" class="pane"></div>
+  </div>
   <div class="legend">
-    <span style="color:var(--corr)">━ corroborated</span><span style="color:var(--obs)">━ observed</span>
-    <span style="color:var(--inf)">┅ inferred</span><span style="color:var(--contra)">━ contradicted</span>
-    <span style="color:var(--agent)">■ agent</span><span style="color:var(--human)">■ human</span>
+    <span><i style="border-color:var(--corr)"></i>corroborated</span><span><i style="border-color:var(--obs)"></i>observed</span>
+    <span><i class="dash" style="border-color:var(--inf)"></i>inferred</span><span><i style="border-color:var(--contra)"></i>contradicted</span>
+    <span><i class="box" style="background:var(--agent)"></i>agent</span><span><i class="box" style="background:var(--human)"></i>human</span>
   </div>
 </div>
-<div id="detail"><span class="muted">Click a step, node, edge, finding or timeline row.</span></div>
+<div id="detail"><p class="hint">Click a step, node, edge, finding or timeline row to see its supporting records.</p></div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -146,17 +206,19 @@ async function loadGraph(view) {
   ];
   cy = cytoscape({
     container: $("#cy"), elements: els, wheelSensitivity: 0.2,
-    layout: { name: "breadthfirst", directed: true, spacingFactor: 1.15, padding: 30 },
+    layout: { name: "breadthfirst", directed: true, spacingFactor: 1.45, padding: 40 },
     style: [
       { selector: "node", style: { "background-color": n => KIND[n.data("kind")] || "#888", label: "data(label)",
-        color: "#d9dee5", "font-size": 9, "text-wrap": "wrap", "text-max-width": 130, "text-valign": "bottom",
-        "text-margin-y": 4, width: 18, height: 18 } },
+        color: "#d6dde6", "font-size": 9, "text-wrap": "ellipsis", "text-max-width": 150, "text-valign": "bottom",
+        "text-margin-y": 5, width: 18, height: 18, "text-background-color": "#0d1117", "text-background-opacity": 0.85,
+        "text-background-padding": 2, "text-background-shape": "roundrectangle" } },
       { selector: 'node[attribution = "agent"]', style: { "border-width": 3, "border-color": "#e5534b" } },
       { selector: 'node[attribution = "human"]', style: { "border-width": 3, "border-color": "#539bf5" } },
       { selector: 'node[kind = "tool_call"]', style: { shape: "round-rectangle", width: 26 } },
       { selector: 'node[kind = "fragment"]', style: { shape: "tag" } },
       { selector: "edge", style: { width: 1.4, "curve-style": "bezier", "target-arrow-shape": "triangle",
-        "arrow-scale": .7, label: "data(label)", "font-size": 8, color: "#8a94a3", "text-rotation": "autorotate",
+        "arrow-scale": .7, label: "data(label)", "font-size": 8, color: "#8792a2", "text-rotation": "autorotate",
+        "text-background-color": "#0d1117", "text-background-opacity": 0.85, "text-background-padding": 1,
         "line-color": "#9aa4b2", "target-arrow-color": "#9aa4b2" } },
       { selector: 'edge[status = "corroborated"]', style: { "line-color": "#57ab5a", "target-arrow-color": "#57ab5a", width: 2.2 } },
       { selector: 'edge[status = "inferred"]', style: { "line-color": "#e0823d", "target-arrow-color": "#e0823d", "line-style": "dashed" } },
@@ -259,7 +321,7 @@ function focus(ids) {
 }
 
 async function sidebar() {
-  const c = await j("/api/case"); $("#casename").textContent = c ? `· ${c.name}` : "";
+  const c = await j("/api/case"); $("#casename").textContent = c ? c.name : "";
   const chain = await j("/api/chain") || {};
   $("#entry").innerHTML = (chain.entry_points || []).map(e => `<div class="card" data-ids='${esc(JSON.stringify([e.fragment]))}'>` +
     `<b>${esc(e.fragment)}</b><br><span class="k">${esc(e.source)}</span><br>` +
@@ -279,7 +341,7 @@ async function sidebar() {
   const llm = await j("/api/llm") || {};
   const s = llm.summary;
   $("#narrative").innerHTML = s ? `<div class="k">${esc(s.kept)} of ${esc(s.sentences)} sentences kept · checks: ${esc(s.validation || "ids+entities")}</div>` +
-    `<p>${esc(s.summary)}</p>` + (s.dropped || []).map(d => `<div class="drop k">dropped: ${esc(d.sentence)}<br><i>${esc(
+    `<p class="summary">${esc(s.summary)}</p>` + (s.dropped || []).map(d => `<div class="drop k">dropped: ${esc(d.sentence)}<br><i>${esc(
       (d.unsupported_relations || d.unsupported_entities || d.bad_citations || ["no citation"]).join("; "))}</i></div>`).join("")
     : '<span class="k">none (ptir explain --llm-url URL)</span>';
   document.querySelectorAll(".card[data-ids]").forEach(el => el.onclick = () => {

@@ -14,7 +14,7 @@
 services:
   ui:
     build: .
-    image: prompttracir:0.8.0
+    image: prompttracir:1.0.0
     ports:
       - "127.0.0.1:${PTIR_PORT:-8000}:8000"
     volumes:
