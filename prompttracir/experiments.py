@@ -413,7 +413,8 @@ def render(result: dict) -> str:
     for group, title, intro in [
             ("baseline", "Baselines",
              "Every baseline runs on the same frozen runs (all scored runs). Trace only stands in for "
-             "AgentDFIR, which reads the same agent-side records; AgentDFIR itself was not run."),
+             "AgentDFIR, which reads the same agent-side records but not the harness trace format; "
+             "AgentDFIR itself was run on the six Claude Code runs only (docs/AGENTDFIR.md)."),
             ("ablation", "Ablations",
              "Each row removes one input from the full system and re-analyses every run.")]:
         keys = ["full"] + [k for k, g, _, _ in CONDITIONS if g == group and k in conds]

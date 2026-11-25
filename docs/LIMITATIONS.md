@@ -46,8 +46,10 @@ decisions behind several of these points are in [ROADMAP.md](../ROADMAP.md), sec
 - **AttnTrace is not built** (it needs attention weights the model server does not return), and
   leave-one-out replay was not validated on the real model (replay fidelity, docs/TESTING.md 10.5).
   The frozen results use the segment localizer, which needs no model.
-- **AgentDFIR was not run.** The trace-only baseline reads the same agent-side records and stands
-  in for it.
+- **AgentDFIR was run on the six Claude Code runs only.** It does not read the harness trace
+  format of the other 27 scored runs, and none of the six is a successful attack, so it is compared
+  on false alarms and transcript checks only (docs/AGENTDFIR.md); the trace-only baseline, which
+  reads the same agent-side records, stands in for it on all runs.
 - **The agent's own activity is recognised by convention.** Model-server traffic is identified by
   the envelope's `model_api_domains`, and the harness's source copies by their SHA-256 file names.
   Another agent that writes its own records elsewhere would need the same treatment.

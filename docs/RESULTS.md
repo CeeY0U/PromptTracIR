@@ -50,7 +50,7 @@ Met / missed is judged on the column the criterion names (all runs, or the train
 
 ## Baselines
 
-Every baseline runs on the same frozen runs (all scored runs). Trace only stands in for AgentDFIR, which reads the same agent-side records; AgentDFIR itself was not run.
+Every baseline runs on the same frozen runs (all scored runs). Trace only stands in for AgentDFIR, which reads the same agent-side records but not the harness trace format; AgentDFIR itself was run on the six Claude Code runs only (docs/AGENTDFIR.md).
 
 | Condition | Link P | Link R | Attrib. F1 | Loc. F1 | Span F1 | Malicious F1 | First dev. | Chain edge F1 | Path exact | Impact acc. | Clean runs flagged | Tamper det. | Contradictions (untampered) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
