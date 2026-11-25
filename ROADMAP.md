@@ -4,7 +4,7 @@ Group 17, ICT3215. Written 2026-11-11 against the proposal (`ICT3215_PA-G17_Prop
 
 Each version below is a tagged release that builds on the one before it. Every version ends with something that can be demonstrated and a "done when" check, so a release is never just "more code".
 
-## 1. Where the repo is today (v0.1.0)
+## 1. Where the repo started (v0.1.0)
 
 The repo holds a working skeleton that touches all six proposal phases thinly:
 
@@ -21,23 +21,31 @@ Checked on 2026-11-11: the 7 tests pass and the README quick start reproduces th
 
 **The catch: everything has only run on synthetic evidence.** No number in the proposal's Table III can be reported yet.
 
-## 2. Gaps against the proposal
+## 2. Proposal items and their status at v1.0
 
-| Area | Proposal says | Repo today |
-|---|---|---|
-| Trace inputs | AgentDFIR packages, OpenTelemetry, JSON | Harness JSONL only |
-| Windows artifacts | MFT/USN, Prefetch, Amcache, registry, SRUM | Not parsed |
-| Memory | Volatility 3 cross-check of the transcript | Image is hashed and stored, not parsed |
-| Network | Zeek or Suricata, DNS and proxy logs, PCAP | Zeek `conn.log` only |
-| Human signals | PSReadLine, UserAssist, ShellBags, Jump Lists, LNK, logon sessions, 4688, 4104 | PSReadLine and process ancestry only. 4104 and 4624 are parsed but not used in scoring |
-| Traceback | PromptLocate, TracLLM or AttnTrace, AttriGuard-style replay, surrogate model for closed agents | Leave-one-out replay and regex heuristic |
-| Source preservation | Original bytes, extracted text and model-visible text kept separately | Model-visible text and a hash of it |
-| Schema | Event time and ingestion time | No ingestion time |
-| Evaluation | At least 60 labelled runs, 2 agents, paired human runs, 4 baselines, 6 ablations (reduced to 30 runs, section 5) | 1 scenario, single-case scorer |
-| Metrics | Edge P/R/F1, calibration error, path exact match, span overlap, narrative rates | Fragment-set F1, attribution accuracy and macro-F1, first deviation, impact per destination |
-| Interface | React + Cytoscape, STIX 2.1 with ATLAS tags, Docker Compose | Single HTML page, no export, no Compose |
-| Evaluation agent | LangGraph agent, plus Claude Code via AgentDFIR | Plain tool loop |
-| Repo hygiene | n/a | No `.gitignore`, CI, changelog or licence |
+Updated 25 Nov 2026 (v1.0.1). The first version of this table (11 Nov) compared the proposal with the v0.1 skeleton at `da68092` and is kept in the git history. Decisions are explained in section 6 and limits in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
+| Area | Proposal says | Status at v1.0 | Notes |
+|---|---|---|---|
+| Trace inputs | AgentDFIR packages, OpenTelemetry, JSON | Done (v0.2) | Lab runs use the harness JSONL and Claude Code session logs. The OpenTelemetry importer is tested on synthetic spans only (neither lab agent emits spans). The AgentDFIR importer was checked on real packages of the six Claude Code runs (v1.0.1). |
+| Windows artifacts | MFT/USN, Prefetch, Amcache, registry, SRUM | Done (v0.3, checked on real output in v0.3.1) | `$MFT` and `$J` are collected only with KAPE, which is optional; the file inventory (v0.5) gives impact evidence without it. |
+| Memory | Volatility 3 cross-check of the transcript | Done (v0.5) | Image taken in every run. The ablation shows no measurable effect, because a finished run's processes have usually left memory. |
+| Network | Zeek or Suricata, DNS and proxy logs, PCAP | Zeek conn, dns, http and PCAP done (v0.3) | Suricata was not needed: Zeek's logs answered every network question in the scenarios. No proxy logs: the lab network has no proxy (the VM connects straight to the Kali host), and Zeek on the packet capture gives the same destinations and byte counts. |
+| Human signals | PSReadLine, UserAssist, ShellBags, Jump Lists, LNK, logon sessions, 4688, 4104 | Done (v0.4) | All are weighted signals in `configs/attribution-defaults.json`. |
+| Traceback | PromptLocate, TracLLM or AttnTrace, AttriGuard-style replay, surrogate model for closed agents | Done (v0.5) except AttnTrace | AttnTrace needs attention weights, which llama-server does not return (section 6). Replay fidelity on the real model (`docs/TESTING.md` 10.5) was optional and not run before the freeze; the frozen results use the segment localizer, which needs no model. |
+| Source preservation | Original bytes, extracted text and model-visible text kept separately | Done (v0.2) | |
+| Schema | Event time and ingestion time | Done (v0.3) | |
+| Evaluation | At least 60 labelled runs, 2 agents, paired human runs, 4 baselines, 6 ablations | 30 planned slots (33 scored runs and 2 tampered copies); 3 agent classes; a paired human session in every run; all 6 ablations | 60 runs became 30 slots because of time (section 5). Baselines: trace only, endpoint only, timestamp only and the cue-only localizers. AgentDFIR does not read the harness trace format, so it was run on the six Claude Code runs only (v1.0.1): 606 findings, 23 of them inside the agent sessions, on runs where PromptTracIR raised none ([docs/AGENTDFIR.md](docs/AGENTDFIR.md)). |
+| Metrics | Edge P/R/F1, calibration error, path exact match, span overlap, narrative rates | Done (v0.4 to v0.6) | Calibration (ECE, Brier) is computed by `eval-batch` but not shown in `docs/RESULTS.md`. |
+| Interface | React + Cytoscape, STIX 2.1 with ATLAS tags, Docker Compose | Single page + Cytoscape, STIX 2.1, Compose (v0.7) | Single page instead of React (section 6). The Compose `ui` service was checked on Kali; the `model` service was not run. |
+| Evaluation agent | LangGraph agent, plus Claude Code via AgentDFIR | Plain tool loop; Claude Code session logs read directly | Section 6. |
+| Collection | Velociraptor or KAPE | `tools/collect-run.ps1` with optional KAPE | The proposal allowed either; one collection script on the single lab VM covered every artefact, so a Velociraptor server added nothing. |
+| Model serving | Quantised open-weight model on llama.cpp or vLLM | llama.cpp, model pinned (v0.6) | The code talks to any OpenAI-compatible server, vLLM included; only llama.cpp was run. |
+| Fine-tuning | Deferred until the dataset exists | Not started | Too few attacks that a model actually followed to train on; prompting plus validation was kept (docs/LIMITATIONS.md). |
+| Scenarios | AgentDojo seeds tasks and attacker goals | 5 scenarios written for the Windows lab | AgentDojo's tasks run against simulated tools written in Python (a mock bank, mock email), not real programs on an operating system, so seeding from it would not produce the Windows processes, files and network traffic the evaluation measures. The scenarios borrow attack outcomes and delivery patterns from AgentDojo, Greshake et al. and EchoLeak instead. |
+| Analyst study | Timed comparison with Plaso / Timesketch, System Usability Scale | Cut | No ethics clearance or time before 29 Nov (section 6); Table III reports it as not measured. |
+| Observability stack | OpenTelemetry, OpenLLMetry and self-hosted Langfuse spans | Importer only | Neither lab agent emits OpenTelemetry spans (the harness writes its own trace, Claude Code its session log), so there was nothing for Langfuse to collect. The importer reads OpenLLMetry attributes and is tested on synthetic spans. |
+| Repo hygiene | n/a | Done (v0.1.1) | `.gitignore`, CI, changelog, licence. |
 
 ## 3. Version ladder
 
@@ -226,6 +234,11 @@ Status (2026-11-23, v1.0.0): released.
 - Demo case: the synthetic sample (`samples/make_sample.py`), built natively (README quick start) or entirely inside the Docker image.
 - Dataset package: `ptir package-dataset runs` zips every run's ground truth, case metadata, custody log and analysis output with the freeze manifest and `RESULTS.md`, without raw evidence.
 - Left for the team: the written report.
+
+Status (2026-11-25, v1.0.1): final fixes, no metric changed.
+- AgentDFIR v5.0.0 run on the six Claude Code runs (the only runs in a format it reads): it verified all six transcript packages and checked 12 tool calls against Sysmon (3 corroborated, 0 contradicted), but raised 606 findings, 23 of them inside the agent sessions, on runs where PromptTracIR raised none. Method, results and `tools/agentdfir-compare.sh` in [docs/AGENTDFIR.md](docs/AGENTDFIR.md); `ptir import-adfir` imported all six packages.
+- Section 2 rewritten as the status of every proposal item at v1.0, with the reason for each item not built or not used.
+- `.gitattributes` keeps `docs/RESULTS.md` LF on checkout, so a plain `diff` against a fresh `ptir experiments` run works on Windows.
 
 ---
 

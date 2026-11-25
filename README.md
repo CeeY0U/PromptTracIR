@@ -13,7 +13,7 @@ PromptTracIR takes agent traces plus Windows host and network evidence, then ans
 Every relationship in the output carries an evidence state (observed, corroborated, inferred,
 contradicted, unknown) and links back to the exact raw record it came from.
 
-> Status: v1.0.0 (23 Nov 2026), the final release. The pipeline runs on real lab evidence
+> Status: v1.0.1 (25 Nov 2026), the final release. The pipeline runs on real lab evidence
 > (Windows 11 24H2 VM, Nov 2026): attribution engine (v0.4), causal reconstruction (v0.5), a
 > checkable local-model layer (v0.6), analyst views, STIX 2.1 export and Docker Compose (v0.7), and
 > the evaluation release (v0.8): the dataset (35 cases, 33 scored runs) and settings are frozen and
@@ -23,7 +23,8 @@ contradicted, unknown) and links back to the exact raw record it came from.
 > detected, no finding on any of the 21 runs without an attack. Local-model summaries: 0.091
 > unsupported before validation on the training split (target 0.05, missed), 0 after. The analyst
 > study was cut. v1.0 adds a calmer UI theme, `ptir package-dataset` and
-> [docs/LIMITATIONS.md](docs/LIMITATIONS.md). Submission deadline: 29 Nov 2026, 23:59. See
+> [docs/LIMITATIONS.md](docs/LIMITATIONS.md); v1.0.1 adds the AgentDFIR comparison
+> ([docs/AGENTDFIR.md](docs/AGENTDFIR.md)) and brings ROADMAP section 2 up to date. Submission deadline: 29 Nov 2026, 23:59. See
 > [ROADMAP.md](ROADMAP.md), [docs/TESTING.md](docs/TESTING.md),
 > [docs/DATASET_PROGRESS.md](docs/DATASET_PROGRESS.md) and
 > [What is not built yet](#what-is-not-built-yet).
@@ -139,7 +140,7 @@ agent, git attributed to the human, exfiltration to `collect.attacker-lab.test` 
 | Condition | What changes |
 |---|---|
 | Full system | nothing |
-| Trace only | every host evidence kind left out: the agent's own records only (what AgentDFIR reads; AgentDFIR itself was not run) |
+| Trace only | every host evidence kind left out: the agent's own records only (what AgentDFIR reads; AgentDFIR itself was run on the Claude Code runs only, [docs/AGENTDFIR.md](docs/AGENTDFIR.md)) |
 | Endpoint only | the agent trace, requests and sources left out |
 | Timestamp only | each exec tool call linked to the process that started nearest to it in its window; a process is the agent's if it started inside an agent session (`--ablate timestamp_links`) |
 | Cue-only localizer (v0.1 cues / current cues) | `--localizer heuristic-v01` / `heuristic` |
@@ -364,12 +365,12 @@ Mapped to the proposal so the team can split it up:
 | MFT/USN, Prefetch, Amcache, SRUM, registry parsers | done (v0.3), checked on real output (v0.3.1) | EZ Tools CSV adapters, plus LNK / Jump Lists / ShellBags; `$MFT`/`$J` only with KAPE |
 | Zeek DNS / HTTP, Security 4663 file reads | done (v0.3) | 4663 needs `tools/audit-canary.ps1` on the VM |
 | Volatility 3 cross-check of the transcript | done (v0.5) | `crosscheck.py` compares the trace with Sysmon / 4688 and memory; processes from a finished run are usually gone from memory, so Sysmon carries most checks |
-| AgentDFIR / OpenTelemetry trace adapters | done (v0.2) | Claude Code transcripts have no PIDs; signature check left to `agentdfir verify` |
+| AgentDFIR / OpenTelemetry trace adapters | done (v0.2) | Claude Code transcripts have no PIDs; signature check left to `agentdfir verify`; AgentDFIR import checked on real packages of the six Claude Code runs (v1.0.1) |
 | PromptLocate / TracLLM / AttnTrace modules | done (v0.5) except AttnTrace | segment (PromptLocate-style) and group search (TracLLM-style) localizers; AttnTrace not built: it needs attention weights an OpenAI-compatible server does not return (ROADMAP section 6) |
 | STIX 2.1 export with ATLAS tags | done (v0.7) | `ptir export-stix`; all 35 lab cases pass the OASIS validator |
 | Multi-run evaluation | done (v0.2) | `ptir eval-batch` |
 | Ablations | done (v0.4, v0.8) | `--without KIND` for evidence kinds; `--ablate pids` and `--ablate context_ids` inside the trace; all six proposal ablations in `ptir experiments` |
-| Baselines | done (v0.8) | trace only, endpoint only, timestamp only, cue-only localizers; AgentDFIR approximated by trace only (not run itself) |
+| Baselines | done (v0.8, v1.0.1) | trace only, endpoint only, timestamp only, cue-only localizers; AgentDFIR v5.0.0 on the six Claude Code runs (606 findings, 23 inside the sessions, on runs where PromptTracIR raised none: [docs/AGENTDFIR.md](docs/AGENTDFIR.md)) |
 | Dataset freeze, results tables | done (v0.8) | `ptir freeze`, `ptir experiments`, [docs/RESULTS.md](docs/RESULTS.md) |
 | Dataset package, limitations, demo case | done (v1.0) | `ptir package-dataset`, [docs/LIMITATIONS.md](docs/LIMITATIONS.md), the synthetic demo case (quick start, or Docker only) |
 | Analyst study (Plaso / Timesketch comparison) | **cut** | no ethics clearance or time before 29 Nov (ROADMAP section 6); Table III reports it as not measured |
@@ -383,11 +384,11 @@ prompttracir/   schema, case, parsers/, correlate, graph, scope, impact, traceba
 harness/        agent.py (traced lab agent), scripted_model.py, scenario.py, exfil_sink.py, label_run.py,
                 tamper_trace.py (edited-transcript test copies), scenarios/
 tools/          collect-run.ps1, parse-artifacts.ps1, export-events.ps1, human-session.ps1, audit-canary.ps1,
-                sysmon-lab.xml
+                sysmon-lab.xml, agentdfir-compare.sh (AgentDFIR on the Claude Code runs, v1.0.1)
 configs/        attribution-defaults.json, local-model.json (pinned model and server), tuning procedure,
                 frozen-runs.json (v0.8 dataset and settings freeze)
 docs/           TESTING.md (automated tests, lab runs, acceptance checks), DATASET_PROGRESS.md, STIX_EXTENSION.md,
-                RESULTS.md (v0.8, generated by `ptir experiments`), LIMITATIONS.md (v1.0)
+                RESULTS.md (v0.8, generated by `ptir experiments`), LIMITATIONS.md (v1.0), AGENTDFIR.md (v1.0.1)
 Dockerfile, docker-compose.yml   UI / CLI image and the pinned local model server (v0.7)
 samples/        make_sample.py (synthetic evidence for development and tests)
 tests/          end-to-end tests

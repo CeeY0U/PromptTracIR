@@ -2,6 +2,26 @@
 
 All notable changes to PromptTracIR. Versions follow [ROADMAP.md](ROADMAP.md).
 
+## [1.0.1] - 2026-11-25
+
+Final fixes. No metric changed: apart from one sentence in the baselines section (below),
+`docs/RESULTS.md` is the same file.
+
+### Added
+- `docs/AGENTDFIR.md` and `tools/agentdfir-compare.sh`: AgentDFIR v5.0.0 run on the six Claude
+  Code runs (the only runs in a format it reads) with their raw event logs. It verified all six
+  packages and checked 12 tool calls against Sysmon (3 corroborated, 0 contradicted), but raised
+  606 findings, 23 of them inside the agent sessions, on runs where PromptTracIR raised none.
+  `ptir import-adfir` imported all six packages.
+- `.gitattributes`: `docs/RESULTS.md` stays LF on checkout, so a plain `diff` works on Windows.
+
+### Changed
+- ROADMAP section 2 is now the status of every proposal item at v1.0 (it compared the proposal
+  with the v0.1 skeleton), with the reason for each item not built or not used, including
+  Velociraptor, proxy logs, Langfuse, AgentDojo and fine-tuning.
+- The baselines paragraph written by `ptir experiments` (and `docs/RESULTS.md`), README and
+  `docs/LIMITATIONS.md` say where AgentDFIR was run instead of "not run".
+
 ## [1.0.0] - 2026-11-23
 
 Final release (roadmap v1.0). No metric changed after the v0.8 freeze: `docs/RESULTS.md` is the
